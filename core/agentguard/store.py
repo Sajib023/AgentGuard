@@ -40,14 +40,17 @@ class Store:
                 sess = conn.execute(
                     "SELECT 1 FROM sessions WHERE session_id=?", (event.session_id,)
                 ).fetchone()
+                cwd = data.get("cwd") or None
                 if not sess:
                     conn.execute(
-                        "INSERT INTO sessions (session_id, agent, first_ts, last_ts, pid, ppid, model) "
-                        "VALUES (?,?,?,?,?,?,?)",
+                        "INSERT INTO sessions (session_id, agent, first_ts, last_ts, pid, ppid, model, cwd) "
+                        "VALUES (?,?,?,?,?,?,?,?)",
                         (event.session_id, event.agent.value, event.ts, event.ts,
-                         data.get("pid"), data.get("ppid"), data.get("model")),
+                         data.get("pid"), data.get("ppid"), data.get("model"), cwd),
                     )
-                    return
+                    return  # fresh session: nothing else arrives with this event
+                if cwd:
+                    add("cwd", cwd)  # re-registration refreshes project dir
             if et is EventType.session_end:
                 add("end_ts", event.ts)
             if et is EventType.prompt_before:
@@ -137,6 +140,7 @@ class Store:
                     "last_ts": r["last_ts"],
                     "end_ts": r["end_ts"],
                     "model": r["model"],
+                    "cwd": r["cwd"],
                     "pid": r["pid"],
                     "prompt_count": r["prompt_count"],
                     "tool_calls": r["tool_calls"],

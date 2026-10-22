@@ -2,6 +2,12 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import type { ApprovalRow, BreakerSnapshot, SessionRow } from "../types";
 
+/** Trailing path fragments — enough to tell projects apart in the sidebar. */
+function shortCwd(p: string): string {
+  const parts = p.replace(/\/+$/, "").split("/").filter(Boolean);
+  return parts.slice(-2).join("/");
+}
+
 export function Sessions({ sessions, selected, onSelect }: {
   sessions: SessionRow[]; selected: string | null; onSelect: (id: string | null) => void;
 }) {
@@ -17,6 +23,7 @@ export function Sessions({ sessions, selected, onSelect }: {
                onMouseDown={() => onSelect(s.session_id)}>
             <span className="sid">{s.session_id}</span>
             <span className="tag">{s.agent}</span>
+            {s.cwd ? <span className="cwd" title={s.cwd}>{shortCwd(s.cwd)}</span> : null}
             <span className="nums">{s.tokens.toLocaleString()} tok · ${s.cost_usd.toFixed(4)}</span>
           </div>
         ))}

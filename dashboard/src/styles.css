@@ -71,6 +71,7 @@ aside { background: var(--bg); overflow-y: auto; padding: 8px; display: flex; fl
   color: var(--cyan); text-transform: uppercase; letter-spacing: 0.08em;
 }
 .nums { color: var(--dim); font-size: 11px; width: 100%; padding-left: 14px; }
+.cwd { color: var(--dim); font-size: 10px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* breaker rows */
 .brow { border-left: 3px solid var(--green); padding: 4px 8px; margin-bottom: 6px; background: var(--panel-2); border-radius: 4px; }

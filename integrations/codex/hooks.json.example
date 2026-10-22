@@ -1,0 +1,112 @@
+{
+  "_comment": "AgentGuard lifecycle hooks for Codex — installed by integrations/codex/install.sh into ~/.codex/hooks.json. Edit the script path if AgentGuard lives elsewhere.",
+  "description": "AgentGuard: prompt/tool firewall, breaker shield, live session telemetry.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "_comment": "Only fresh/resumed sessions register; compact/fork/clear would otherwise reset breaker counters mid-thread.",
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/sajib/AgentGuard/integrations/codex/hooks/agentguard_codex_hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/sajib/AgentGuard/integrations/codex/hooks/agentguard_codex_hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/sajib/AgentGuard/integrations/codex/hooks/agentguard_codex_hook.py",
+            "timeout": 30,
+            "statusMessage": "AgentGuard firewall check"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/sajib/AgentGuard/integrations/codex/hooks/agentguard_codex_hook.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/sajib/AgentGuard/integrations/codex/hooks/agentguard_codex_hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/sajib/AgentGuard/integrations/codex/hooks/agentguard_codex_hook.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/sajib/AgentGuard/integrations/codex/hooks/agentguard_codex_hook.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/sajib/AgentGuard/integrations/codex/hooks/agentguard_codex_hook.py",
+            "async": true,
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/sajib/AgentGuard/integrations/codex/hooks/agentguard_codex_hook.py",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

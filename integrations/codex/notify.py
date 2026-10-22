@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""AgentGuard notify adapter for Codex CLI.
+"""AgentGuard notify adapter for Codex CLI (turn-complete telemetry).
 
-The Codex CLI exposes exactly one outbound integration point: the `notify`
-hook, invoked when turns complete. It has no prompt or tool interception, so
-this adapter is **observability-only** by design:
+Legacy supplement to the hooks adapter (`integrations/codex/hooks/
+agentguard_codex_hook.py`, installed by `integrations/codex/install.sh`),
+which carries the full enforcement surface. This `notify` hook fires only
+when turns complete:
 
   * every completed turn is streamed into the shared event schema
   * the session appears on the live dashboard with real token/cost data
@@ -11,15 +12,12 @@ this adapter is **observability-only** by design:
   * the circuit breaker still sees the events → its limit/loop detectors
     stay authoritative, and `kill` works through the registered parent pid
 
-What it deliberately does NOT do: firewall Codex prompts. Codex offers no
-in-line gate; pairing it with the AgentGuard CLI (agentguard stop / /v1
-breakers) gives you the enforcement surface.
-
-Install — add to ~/.codex/config.toml:
+Install — add to ~/.codex/config.toml (notify cannot be project-scoped):
 
     notify = ["python3", "/home/sajib/AgentGuard/integrations/codex/notify.py"]
 
-Payload (stdin/argv per Codex version): JSON such as
+Codex appends the JSON payload as the LAST argument; older versions pipe it
+via stdin — both are handled:
     {"type": "agent-turn-complete", "turn-id": "...",
      "input-messages": [...], "last-assistant-message": "..."}
 
@@ -72,18 +70,28 @@ def derive_sid(payload: dict) -> str:
 
 
 def main() -> int:
-    raw = ""
-    if len(sys.argv) > 1:
-        raw = sys.argv[1]
-    if not raw:
+    # Codex appends the JSON payload as the LAST argv entry. Older versions
+    # piped it via stdin, and extra configured args can precede the payload —
+    # so scan argv from the end for the first parseable JSON object, then
+    # fall back to stdin.
+    payload: dict = {}
+    for arg in reversed(sys.argv[1:]):
+        try:
+            parsed = json.loads(arg)
+            if isinstance(parsed, dict):
+                payload = parsed
+                break
+        except Exception:
+            continue
+    if not payload:
         try:
             raw = sys.stdin.read()
         except Exception:
             raw = ""
-    try:
-        payload = json.loads(raw) if raw.strip() else {}
-    except Exception:
-        payload = {}
+        try:
+            payload = json.loads(raw) if raw.strip() else {}
+        except Exception:
+            payload = {}
     if not payload:
         return 0
 

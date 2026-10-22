@@ -78,6 +78,11 @@ class Database:
                 );
                 """
             )
+            # migrations beyond CREATE IF NOT EXISTS
+            try:
+                cur.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
             self._conn.commit()
 
     # -- execution ---------------------------------------------------------

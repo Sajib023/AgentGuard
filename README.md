@@ -116,7 +116,7 @@ watchdog, always available; weaponize nothing else.
 |---|---|---|---|
 | OpenCode | `integrations/opencode/plugin/agentguard-plugin.js` | `install.sh` (project) or `install.sh --global` (every session) | prompt firewall, tool firewall, tokens/cost, lifecycle, breaker shield |
 | Claude Code | `integrations/claude/hooks/agentguard_hook.py` | merge `integrations/claude/settings.example.json` into `~/.claude/settings.json` (or per-project `.claude/settings.json`) | prompt firewall, tool firewall, lifecycle, breaker shield |
-| Codex CLI | `integrations/codex/notify.py` | `~/.codex/config.toml`: `notify = ["python3","<path>"]` (global by nature) | observability only (Codex exposes no prompt/tool gate) |
+| Codex CLI | `integrations/codex/hooks/agentguard_codex_hook.py` | `integrations/codex/install.sh` (writes user-level `~/.codex/hooks.json` — every project) | prompt firewall (block-based; Codex has no prompt rewrite), tool firewall **with in-place input rewrite**, breaker shield, full lifecycle telemetry |
 | LangGraph | `core/agentguard/adapters/langgraph.py` | `pip install -e core` then callback handler | nodes/edges/LLM/tool events |
 
 ### OpenCode install scope matters
@@ -136,6 +136,32 @@ restart the OpenCode service (`opencode service restart`) once after installing
 to pick up the latest adapter. (Same rule for Claude Code hooks, which reload
 per session.)
 
+### Codex: full lifecycle hooks, per-project sessions
+
+Codex now ships a lifecycle hook framework (user-level `~/.codex/hooks.json`,
+loaded for **every** project — the `notify` key can't even be set at project
+scope). `integrations/codex/install.sh` deploys the hook script to
+`~/.codex/hooks/` and writes `~/.codex/hooks.json`, but never clobbers an
+existing one (it prints a manual-merge reference instead). Events handled:
+
+| Hook | Behavior |
+|---|---|
+| `SessionStart` (`startup\|resume`) | registers session + `cwd` + agent pid (the kill switch). `compact\|fork\|clear` are skipped — they would silently reset breaker counters mid-thread |
+| `UserPromptSubmit` | full firewall verdict: `block` → deny, `approve` → deny pending dashboard review, `sanitize` with redactions → deny. Codex cannot rewrite prompts, so if the prompt actually carries secrets it is denied instead — same guarantee as the other adapters' rewrite: no secrets reach the model (other sanitize kinds pass with an injected warning) |
+| `PreToolUse` | breaker shield first (AgentGuard management commands exempt), then firewall: `block`/`approve` → deny, `sanitize` → **allowed with `updatedInput` rewritten in place** (e.g. AWS keys become `[REDACTED:aws_secret]`) |
+| `PostToolUse` | tool result telemetry |
+| `PermissionRequest` | breaker-only deny; deliberately never auto-allows (that would bypass the user's approval gate) and never re-runs the firewall (PreToolUse already judged this call) |
+| `Stop`, `Interrupt`, `SubagentStart/Stop`, `SessionEnd` | telemetry only. `Stop` never emits `decision: block` — for Codex that forces another model turn, i.e. a session that never ends |
+
+One step the installer can't do for you: Codex skips **untrusted** hooks.
+After installing, run `/hooks` inside Codex and review + trust the AgentGuard
+hooks (or start once with `--dangerously-bypass-hook-trust`). Each Codex
+session's `cwd` is captured at registration, so the dashboard sidebar shows
+which project every session belongs to.
+
+The legacy turn-complete `notify` adapter (`integrations/codex/notify.py`)
+still works as a supplement and needs no config beyond the hooks above.
+
 ### LangGraph
 
 ```python
@@ -147,8 +173,9 @@ graph.invoke(inputs, config={"callbacks": [handler]})
 ## Dashboard
 
 `http://127.0.0.1:8907/` — live event feed (session-switchable), session
-cards (tokens/cost/live breaker state), firewall verdicts, pending approvals,
-breaker panel (usage vs limits, reset + limits controls from the browser).
+cards (tokens/cost, project directory, live breaker state), firewall verdicts,
+pending approvals, breaker panel (usage vs limits, reset + limits controls
+from the browser).
 
 Feed persistence: live delivery is WebSocket; the client additionally polls
 `/v1/events` every few seconds and dedupes by event id, so a WS hiccup (core
@@ -218,8 +245,10 @@ curl -s -X POST localhost:8907/v1/config/mode -d '{"mode":"observe"}' -H 'conten
 - Llama Guard 3 (1B) is a triage model: it can miss novel prompt-space
   attacks; deterministic rules are the load-bearing tier and Llama Guard can't
   supersede them.
-- Codex integration cannot intercept: Codex CLI hooks are limited to
-  turn-complete notifications; firewalling there must happen at a proxy layer
-  instead.
+- Codex prompt-level `sanitize`: Codex hooks cannot rewrite user prompts, so
+  a secrets verdict on a prompt **denies** it instead of redacting (tool
+  inputs are rewritten normally). The turn-complete `notify` channel alone is
+  not enforcement — the hooks adapter is; untrusted hooks are skipped until
+  you run `/hooks`.
 - Loop detection is behavioral, not telepathic: everything it sees is what
   the shared schema observed.

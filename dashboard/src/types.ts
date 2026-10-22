@@ -22,6 +22,7 @@ export interface SessionRow {
   last_ts: number;
   end_ts: number | null;
   model: string | null;
+  cwd?: string | null;
   pid: number | null;
   prompt_count: number;
   tool_calls: number;
