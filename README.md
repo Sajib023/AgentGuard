@@ -22,8 +22,9 @@ the firewall's LLM tier queries a **local** Ollama serving `llama-guard3:1b`.
 ## Quickstart
 
 ```bash
-# 1. core (Python 3.12, editable install)
-cd core && pip install -e . && cd ..
+# 1. core (Python 3.11+, editable install into a local venv)
+python3 -m venv .venv
+.venv/bin/pip install -e ./core
 .venv/bin/agentguard serve            # or: agentguard serve anywhere on PATH
 
 # 2. check health + doctor
@@ -31,9 +32,11 @@ curl http://127.0.0.1:8907/v1/healthz
 .venv/bin/agentguard doctor
 
 # 3. dashboard — just open it
-http://127.0.0.1:8907/                # served by the core (single binary UX)
+http://127.0.0.1:8907/                # served by the core: no separate dev server
 
 # 4. pick your agent(s): see Adapters below
+
+# CLI surface: agentguard serve | stop | doctor | version
 ```
 
 ## Firewall
@@ -42,8 +45,8 @@ Inbound text (prompts, tool arguments) passes through a tiered pipeline:
 
 | Tier | Detector | Role |
 |---|---|---|
-| 1 | `rules.py` — 40+ deterministic patterns | injection phrases, jailbreaks, unsafe payloads |
-| 2 | `heuristics.py` — structural scoring | base64 blobs, unicode homoglyphs, instruction-like density |
+| 1 | `rules.py` — 21 high-confidence regex rules | injection phrases, jailbreaks, unsafe payloads |
+| 2 | `heuristics.py` — structural scoring | base64 blobs, unicode homoglyphs, instruction-like density, paraphrase phrase nets |
 | 3 | `secrets.py` | AWS/GCP/tokens/keys → redaction `[REDACTED:kind]` |
 | 4 | **Llama Guard 3** (`llama-guard3:1b` via Ollama) | semantic safety verdict; never the sole detector |
 
@@ -59,7 +62,7 @@ Actions:
 - `allow` — pass through
 - `sanitize` — text is rewritten (secrets redacted) and execution continues
 - `approve` — execution **pauses**; resolve on the dashboard
-  (`POST /v1/approvals/{id}/resolve {"approved":true}`) within timeout or deny
+  (`POST /v1/approvals/{aid}/resolve {"approved":true}`) within timeout or deny
 - `block` — the adapter rejects the call with the reason
 
 **Observe vs enforce.** `observe` computes full verdicts and records them but
@@ -117,7 +120,7 @@ watchdog, always available; weaponize nothing else.
 | OpenCode | `integrations/opencode/plugin/agentguard-plugin.js` | `install.sh` (project) or `install.sh --global` (every session) | prompt firewall, tool firewall, tokens/cost, lifecycle, breaker shield |
 | Claude Code | `integrations/claude/hooks/agentguard_hook.py` | merge `integrations/claude/settings.example.json` into `~/.claude/settings.json` (or per-project `.claude/settings.json`) | prompt firewall, tool firewall, lifecycle, breaker shield |
 | Codex CLI | `integrations/codex/hooks/agentguard_codex_hook.py` | `integrations/codex/install.sh` (writes user-level `~/.codex/hooks.json` — every project) | prompt firewall (block-based; Codex has no prompt rewrite), tool firewall **with in-place input rewrite**, breaker shield, full lifecycle telemetry |
-| LangGraph | `core/agentguard/adapters/langgraph.py` | `pip install -e core` then callback handler | nodes/edges/LLM/tool events |
+| LangGraph | `core/agentguard/adapters/langgraph.py` | `pip install -e ./core` then callback handler | nodes/edges/LLM/tool events |
 
 ### OpenCode install scope matters
 
@@ -128,13 +131,11 @@ everything. Because OpenCode loads hooks from both sources in sequence
 (global first), the plugin carries an **exactly-once guard**
 (`globalThis.__agentguardActive`): the second copy in the same process
 registers no hooks, so double installs duplicate nothing. Keep both copies
-in sync after edits (or keep only one). Plugins load at service boot — run
-`opencode service restart` once after installing/updating.
+in sync after edits (or keep only one).
 
-OpenCode restart only after plugin edits: plugins load at service boot —
-restart the OpenCode service (`opencode service restart`) once after installing
-to pick up the latest adapter. (Same rule for Claude Code hooks, which reload
-per session.)
+Restart cadence: the OpenCode service loads plugins at boot only — run
+`opencode service restart` after installs or plugin edits. Claude Code
+hooks reload per session; Codex hooks reload per Codex process.
 
 ### Codex: full lifecycle hooks, per-project sessions
 
@@ -189,40 +190,54 @@ frozen feed.
 | `GET /v1/healthz` | liveness + llama-guard reachability |
 | `POST /v1/events` | batch adapter ingestion |
 | `GET /v1/events` | query (`session_id, agent, type, since, limit, order`) |
-| `GET /v1/sessions[/{id}]`, `POST /v1/sessions/{id}/pid` | registry + kill-switch pid |
+| `GET /v1/sessions[/{id}]`, `POST /v1/sessions/{id}/pid` | registry (each row carries the session's project `cwd`) + kill-switch pid |
 | `POST /v1/firewall/check` | full verdict (waits up to `approval_timeout` on `approve` action) |
-| `GET /v1/approvals`, `POST /v1/approvals/{id}/resolve` | approval queue |
+| `GET /v1/firewall/rules` | rule inventory / introspection |
+| `GET /v1/approvals`, `POST /v1/approvals/{aid}/resolve` | approval queue |
 | `GET /v1/breaker/status[/{sid}]` | breaker snapshots |
 | `POST /v1/breaker/reset/{sid}`, `POST /v1/breaker/limits` | operator controls |
 | `POST /v1/config/mode` | `enforce` ⇄ `observe` |
-| `WS /v1/ws?replay=N&session_id=…` | live feed |
+| `WS /v1/ws` | live feed; `?replay=N` replays recent events, `?types=tool_call,firewall_verdict` filters by kind; adapters can also ingest events by posting JSON over the socket; `ping` → `pong` for liveness |
 
 ## Configuration
 
-`agentguard.yaml` (see `core/agentguard/config.py` for the full schema):
+Search order: `AGENTGUARD_CONFIG` env → `--config` flag → `./agentguard.yaml`
+(cwd) → built-in defaults. Full schema in `core/agentguard/config.py`; the
+load-bearing knobs:
 
 ```yaml
+server:
+  db_path: ""                  # empty → ~/.agentguard/events.db (AGENTGUARD_HOME relocates it)
+  retention_hours: 72          # events older than this are pruned at startup
+
 firewall:
-  observe_mode: true           # start observing, flip to enforce when ready
+  observe_mode: false          # parser default; at runtime POST /v1/config/mode flips it without a restart (observe itself resets to enforce on core restart)
   llm_guard:
     enabled: true
-    model: llama-guard3:1b
+    model: llama-guard3:1b     # served by local Ollama, http://127.0.0.1:11434
+    on_failure: allow_pass     # if the LLM tier errors/times out, continue with rules+heuristics ("block" treats it as unsafe instead)
   store_prompt_content: true   # false → hashes/previews only (privacy)
   block_threshold: 70
   sanitize_threshold: 25
+  approval_timeout_seconds: 300
 
 breaker:
-  on_breach: kill              # alert | pause | kill
+  on_breach: kill              # alert | pause (approval gate) | kill (uses registered pid)
   defaults:
-    max_tokens: 50000
+    max_iterations: 60
     max_tool_calls: 200
-    ...
+    max_tokens: 200000
+  agent_overrides:
+    codex: { max_cost_usd: 2.0 }   # per-agent budget overrides
+
 dashboard:
-  dir: ../dashboard/dist
+  dir: ""                      # empty → repo dashboard/dist
 ```
 
-Env in adapters: `AGENTGUARD_URL`, `AGENTGUARD_MODE` (enforce|observe),
-`AGENTGUARD_BREAKER`, `AGENTGUARD_APPROVAL_TIMEOUT`.
+Environment — core: `AGENTGUARD_CONFIG`, `AGENTGUARD_HOME`. Adapters:
+`AGENTGUARD_URL`, `AGENTGUARD_MODE` (enforce|observe), `AGENTGUARD_BREAKER`
+(=0 disables the breaker shield). The Claude Code hook additionally accepts
+`AGENTGUARD_APPROVAL_TIMEOUT`.
 
 ## Development
 
