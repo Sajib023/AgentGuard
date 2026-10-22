@@ -165,6 +165,19 @@ class Store:
         row = self.db.one("SELECT pid FROM sessions WHERE session_id=?", (sid,))
         return int(row["pid"]) if row and row["pid"] else None
 
+    # -- kv (persisted runtime settings, e.g. breaker limit overrides) ------
+    def kv_get(self, key: str) -> str | None:
+        row = self.db.one("SELECT v FROM kv WHERE k=?", (key,))
+        return row["v"] if row else None
+
+    def kv_set(self, key: str, value: str) -> None:
+        with self.db.tx() as conn:
+            conn.execute(
+                "INSERT INTO kv (k, v) VALUES (?,?) "
+                "ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+                (key, value),
+            )
+
     # -- approvals ---------------------------------------------------------
     def create_approval(
         self, *, session_id: str, agent: str, metric: str | None, value: float | None,

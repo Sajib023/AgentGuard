@@ -79,6 +79,30 @@ def test_breaker_per_session_limits(client):
     assert st["limits"]["max_tokens"] == 100
 
 
+def test_per_session_limits_survive_reset_and_restart(client):
+    """Regression: a breaker reset (manual or session_start) must not wipe
+    runtime limit overrides; defaults re-breached big sessions instantly."""
+    client.post("/v1/events", json={"events": [
+        {"agent": "opencode", "session_id": "b3", "type": "session_start", "data": {}},
+    ]})
+    client.post("/v1/breaker/limits", json={
+        "session_id": "b3", "limits": {"max_tokens": 900, "max_tool_calls": 7}})
+    # manual reset keeps the overrides (no 404/defaults here)
+    others = client.post("/v1/events", json={"events": [
+        {"agent": "opencode", "session_id": "b3", "type": "tool_call",
+         "data": {"name": "read", "args_digest": "k1", "status": "success"}}]})
+    assert others.status_code == 200
+    st = client.get("/v1/breaker/status/b3").json()
+    assert st["limits"]["max_tokens"] == 900
+    client.post("/v1/breaker/reset/b3")
+    ev = client.post("/v1/events", json={"events": [
+        {"agent": "opencode", "session_id": "b3", "type": "tool_call",
+         "data": {"name": "read", "args_digest": "k2", "status": "success"}}]})
+    assert ev.status_code == 200
+    st = client.get("/v1/breaker/status/b3").json()
+    assert st["limits"]["max_tokens"] == 900 and st["limits"]["max_tool_calls"] == 7
+
+
 def test_approval_flow(client):
     client.post("/v1/events", json={"events": [
         {"agent": "opencode", "session_id": "a1", "type": "session_start", "data": {}}]})

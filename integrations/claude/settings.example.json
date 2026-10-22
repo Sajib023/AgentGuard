@@ -1,0 +1,47 @@
+{
+  "_comment": "AgentGuard hooks for Claude Code — merge into your settings.json (~/.claude/settings.json global or per-project .claude/settings.json). Point the path at wherever this repo lives.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 /home/sajib/AgentGuard/integrations/claude/hooks/agentguard_hook.py" }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 /home/sajib/AgentGuard/integrations/claude/hooks/agentguard_hook.py" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 /home/sajib/AgentGuard/integrations/claude/hooks/agentguard_hook.py" }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 /home/sajib/AgentGuard/integrations/claude/hooks/agentguard_hook.py" }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 /home/sajib/AgentGuard/integrations/claude/hooks/agentguard_hook.py" }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          { "type": "command", "command": "python3 /home/sajib/AgentGuard/integrations/claude/hooks/agentguard_hook.py" }
+        ]
+      }
+    ]
+  }
+}

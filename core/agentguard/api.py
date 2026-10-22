@@ -169,6 +169,7 @@ def create_app(config: Config | None = None) -> FastAPI:
                 "direction": "inbound",
                 "chars": len(body.text),
                 "hash": sha256_text(body.text)[:16],
+                "context_type": body.context_type,
             }
             if store_content:
                 probe["content"] = truncate(body.text, 8000)
@@ -296,15 +297,16 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.post("/v1/breaker/limits")
     async def breaker_limits(body: LimitsBody):
-        """Runtime per-agent or per-session limit overrides."""
+        """Runtime per-agent or per-session limit overrides.
+
+        Per-session limits persist (SQLite kv) and survive breaker resets
+        and service restarts; they are re-applied whenever session state is
+        (re)created."""
         if not body.limits:
             return JSONResponse(status_code=400, content={"detail": "limits object required"})
         if body.session_id:
-            st = breaker.sessions.get(body.session_id)
-            if not st:
-                return JSONResponse(status_code=404, content={"detail": "unknown session"})
-            st.limits.update({k: v for k, v in body.limits.items() if k in st.limits})
-            return {"session_id": body.session_id, "limits": st.limits}
+            limits = breaker.set_session_limits(body.session_id, body.limits)
+            return {"session_id": body.session_id, "limits": limits}
         if not body.agent:
             return JSONResponse(status_code=400, content={"detail": "agent or session_id required"})
         cfg.breaker.agent_overrides.setdefault(body.agent, {}).update(body.limits)
@@ -355,7 +357,18 @@ def create_app(config: Config | None = None) -> FastAPI:
         async def sender():
             try:
                 while not stop.is_set():
-                    msg = await queue.get()
+                    qget = asyncio.ensure_future(queue.get())
+                    wstop = asyncio.ensure_future(stop.wait())
+                    done, pending = await asyncio.wait(
+                        {qget, wstop}, return_when=asyncio.FIRST_COMPLETED)
+                    for t in pending:
+                        t.cancel()
+                    if wstop in done:
+                        break
+                    try:
+                        msg = qget.result()
+                    except asyncio.CancelledError:
+                        break
                     await ws.send_text(msg)
             except Exception:
                 stop.set()

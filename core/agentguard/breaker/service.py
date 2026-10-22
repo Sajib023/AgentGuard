@@ -7,6 +7,7 @@ token counters. Never inspects hidden model reasoning.
 from __future__ import annotations
 
 import collections
+import json
 import os
 import signal
 import time
@@ -66,8 +67,41 @@ class CircuitBreaker:
         self.sessions: dict[str, SessionBreakerState] = {}
         self._pending: dict[str, list[dict[str, Any]]] = {}
         self.alert_hook: Callable[[str, str], None] | None = None  # extensible alarms
+        # Per-session runtime limit overrides, persisted so they survive
+        # resets (and service restarts). Without this, an operator reset
+        # would quietly restore default budgets and instantly re-breach a
+        # legitimately long-running session.
+        self._overrides: dict[str, dict[str, float]] = self._load_overrides()
 
     # -- lifecycle ----------------------------------------------------------
+    _OVERRIDES_KEY = "breaker_session_overrides"
+
+    def _load_overrides(self) -> dict[str, dict[str, float]]:
+        try:
+            raw = self.store.kv_get(self._OVERRIDES_KEY) if self.store else None
+            return json.loads(raw) if raw else {}
+        except Exception:
+            return {}
+
+    def _save_overrides(self) -> None:
+        if self.store is not None:
+            self.store.kv_set(self._OVERRIDES_KEY, json.dumps(self._overrides))
+
+    def _overrides_for(self, session_id: str) -> dict[str, float]:
+        return self._overrides.get(session_id) or {}
+
+    def set_session_limits(self, session_id: str, limits: dict[str, Any]) -> dict[str, float]:
+        """Runtime per-session limit overrides; persisted across resets/restarts."""
+        allowed = set(self.limits_for(None))
+        clean = {k: v for k, v in (limits or {}).items() if k in allowed}
+        merged = {**self._overrides_for(session_id), **{k: float(v) for k, v in clean.items()}}
+        self._overrides[session_id] = merged
+        self._save_overrides()
+        st = self.sessions.get(session_id)
+        if st is not None:
+            st.limits = {**st.limits, **merged}
+        return st.limits if st is not None else dict(merged)
+
     def limits_for(self, agent: str | None) -> dict[str, float]:
         d = self.config.defaults
         overrides = self.config.agent_overrides.get(agent or "", {}) if agent else {}
@@ -77,6 +111,7 @@ class CircuitBreaker:
 
     def ensure_session(self, event: Event) -> SessionBreakerState | None:
         limits = self.limits_for(event.agent.value)
+        limits = {**limits, **self._overrides_for(event.session_id)}
         st = self.sessions.get(event.session_id)
         if st is None:
             st = SessionBreakerState(
@@ -94,8 +129,27 @@ class CircuitBreaker:
         return st
 
     def reset(self, session_id: str) -> None:
-        self.sessions.pop(session_id, None)
+        """Clear usage counters and any breach for a session, but KEEP its
+        limits (including persisted runtime overrides). Resetting used to
+        drop the whole state, which silently restored default budgets — an
+        open circuit then re-tripped instantly and locked the operator out."""
         self._pending.pop(session_id, None)
+        st = self.sessions.get(session_id)
+        if st is None:
+            return  # no live state: nothing to clear; next event re-creates it
+        st.last_activity = now()
+        st.started_ts = now()
+        st.last_iteration = 0
+        st.llm_calls = 0
+        st.tool_calls = 0
+        st.input_tokens = 0
+        st.output_tokens = 0
+        st.cost_usd = 0.0
+        st.consecutive_tool_errors = 0
+        st.recent_sigs.clear()
+        st.last_alert_ts.clear()
+        st.limits = {**st.limits, **self._overrides_for(session_id)}
+        st.status = "healthy"
 
     def status_for(self, session_id: str) -> dict[str, Any] | None:
         st = self.sessions.get(session_id)
@@ -103,9 +157,11 @@ class CircuitBreaker:
             existing = self.store.get_session(session_id) if self.store else None
             if not existing:
                 return None
+            limits = self.limits_for(existing["agent"])
+            limits = {**limits, **self._overrides_for(session_id)}
             st = SessionBreakerState(
                 session_id=session_id, agent=existing["agent"], started_ts=existing["first_ts"],
-                limits=self.limits_for(existing["agent"]),
+                limits=limits,
             )
             self.sessions[session_id] = st
         return st.snapshot()

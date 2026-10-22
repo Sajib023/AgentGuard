@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+
+# Node / dashboard
+node_modules/
+dashboard/dist/
+
+# Runtime state
+~/.agentguard/
+.agentguard.pid
+*.db
+*.db-shm
+*.db-wal
+
+# Editor / agent runtime
+.DS_Store
+.idea/
+.vscode/
+.opencode/

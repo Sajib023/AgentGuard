@@ -72,6 +72,10 @@ class Database:
                     decision_by TEXT,
                     enforcement TEXT
                 );
+                CREATE TABLE IF NOT EXISTS kv (
+                    k TEXT PRIMARY KEY,
+                    v TEXT NOT NULL
+                );
                 """
             )
             self._conn.commit()
