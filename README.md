@@ -114,10 +114,22 @@ watchdog, always available; weaponize nothing else.
 
 | Agent | File | Install | Coverage |
 |---|---|---|---|
-| OpenCode | `integrations/opencode/plugin/agentguard-plugin.js` | `.opencode/plugins/agentguard/` (`install.sh`) | prompt firewall, tool firewall, tokens/cost, lifecycle, breaker shield |
-| Claude Code | `integrations/claude/hooks/agentguard_hook.py` | see `integrations/claude/settings.example.json` | prompt firewall, tool firewall, lifecycle, breaker shield |
-| Codex CLI | `integrations/codex/notify.py` | `~/.codex/config.toml`: `notify = ["python3","<path>"]` | observability only (Codex exposes no prompt/tool gate) |
+| OpenCode | `integrations/opencode/plugin/agentguard-plugin.js` | `install.sh` (project) or `install.sh --global` (every session) | prompt firewall, tool firewall, tokens/cost, lifecycle, breaker shield |
+| Claude Code | `integrations/claude/hooks/agentguard_hook.py` | merge `integrations/claude/settings.example.json` into `~/.claude/settings.json` (or per-project `.claude/settings.json`) | prompt firewall, tool firewall, lifecycle, breaker shield |
+| Codex CLI | `integrations/codex/notify.py` | `~/.codex/config.toml`: `notify = ["python3","<path>"]` (global by nature) | observability only (Codex exposes no prompt/tool gate) |
 | LangGraph | `core/agentguard/adapters/langgraph.py` | `pip install -e core` then callback handler | nodes/edges/LLM/tool events |
+
+### OpenCode install scope matters
+
+OpenCode discovers plugins from `.opencode/plugins/` (project) and
+`~/.config/opencode/plugins/` (global). A project install only covers
+sessions opened **inside that directory**; `install.sh --global` covers
+everything. Because OpenCode loads hooks from both sources in sequence
+(global first), the plugin carries an **exactly-once guard**
+(`globalThis.__agentguardActive`): the second copy in the same process
+registers no hooks, so double installs duplicate nothing. Keep both copies
+in sync after edits (or keep only one). Plugins load at service boot — run
+`opencode service restart` once after installing/updating.
 
 OpenCode restart only after plugin edits: plugins load at service boot —
 restart the OpenCode service (`opencode service restart`) once after installing

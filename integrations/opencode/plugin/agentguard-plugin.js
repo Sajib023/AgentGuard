@@ -76,10 +76,15 @@ async function ensureSession(client, ctx, sid, hints = {}) {
       const info = await ctx.session.get({ sessionID: sid });
       if (info) {
         if (!model && info.model) model = `${info.model.providerID ?? ""}/${info.model.modelID ?? info.model.id ?? ""}`;
+        // the session's own directory beats the plugin process cwd (shared
+        // services host many projects: without this, every session on the
+        // dashboard "lives" in the service's startup dir)
+        if (!hints.directory && info.directory) hints.directory = info.directory;
       }
     } catch { void 0; }
   }
-  void client.sendEvent(sid, "session_start", { model: model || undefined, cwd: process.cwd?.() });
+  const cwd = hints.directory || ctx?.directory || process.cwd?.();
+  void client.sendEvent(sid, "session_start", { model: model || undefined, cwd });
   void client.reportPid(sid);
 }
 
@@ -151,6 +156,14 @@ function isManagementText(t) {
 
 /* ------------------------------------------------------------------ V2 ---- */
 async function setup(ctx) {
+  // Exactly-once activation per process: OpenCode loads plugins from BOTH
+  // the global and the project plugin dirs, so a project that also has a
+  // copy (plus any watcher reload) would otherwise register every hook
+  // twice — duplicating events and firewall checks. First activation wins;
+  // later candidates in the SAME process register nothing.
+  if (globalThis.__agentguardActive) return {};
+  globalThis.__agentguardActive = true;
+
   const cfg = { ...DEFAULTS };
   if (ctx.options && typeof ctx.options === "object") {
     if (ctx.options.url) cfg.url = String(ctx.options.url);
@@ -312,7 +325,10 @@ async function setup(ctx) {
         const sid = info?.id || payload?.sessionID || payload?.id;
         if (!sid) continue;
         if ((type === "session.created" || type === "session.updated") && !seenSessions.has(sid)) {
-          void ensureSession(client, ctx, sid, { model: info?.modelID || info?.model });
+          void ensureSession(client, ctx, sid, {
+            model: info?.modelID || info?.model,
+            directory: info?.directory,
+          });
         }
         if (type === "session.deleted" || type === "session.idle") {
           void client.sendEvent(sid, type === "session.idle" ? "state_change" : "session_end", {
@@ -463,7 +479,12 @@ const entry = Plugin
   : { id: "agentguard" };
 
 if (!Plugin) {
-  entry.server = async () => makeV1(cfgV1);
+  entry.server = async () => {
+    // V2/V1 fallback share the same exactly-once rule (see setup above).
+    if (globalThis.__agentguardActive) return {};
+    globalThis.__agentguardActive = true;
+    return makeV1(cfgV1);
+  };
 }
 
 export { isManagementText };
