@@ -46,5 +46,6 @@ else
   echo "  covers every OpenCode session on this machine, any directory"
   echo "  (no config entry needed; OpenCode auto-loads this dir at startup)"
 fi
-echo "  restart OpenCode (or run 'opencode service restart') to load it"
+echo "  no restart needed — the OpenCode watcher hot-reloads changed plugin files"
+echo "  (watch ~/.local/share/opencode/log/opencode.log for 'loading plugin' lines)"
 echo "  start the AgentGuard core service once:  agentguard serve"

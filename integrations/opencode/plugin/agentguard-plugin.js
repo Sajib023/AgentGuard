@@ -2,8 +2,21 @@
  * AgentGuard adapter for OpenCode — prompt firewall, live telemetry feed,
  * and circuit-breaker enforcement.
  *
- * Loads under both OpenCode V2 (Plugin.define + setup(ctx)) and V1
- * (server() hook object) from the same entry.
+ * Loader contract (verified against OpenCode 2.1.3 source,
+ * packages/core/src/plugin/{module,promise}.ts):
+ *   default export = { id, setup }   // bare functions/other shapes rejected
+ *   setup(ctx) registers hooks via ctx.*.hook(...) / ctx.event.subscribe()
+ *   and returns a CLEANUP function (the loader invokes it when the plugin's
+ *   scope closes; returning any other truthy value is invoked as cleanup and
+ *   throws). Hooks live on the plugin's scope, so a watcher reload disposes
+ *   the previous registration before the fresh setup re-registers.
+ *
+ * Per-copy ids: global and project plugin dirs are both loaded per location
+ * in one process; distinct ids ("agentguard-global" vs "agentguard", from
+ * the module path) avoid the registrar's duplicate-id failure. The
+ * exactly-once guard is keyed per location directory, not per process:
+ * OpenCode builds a separate plugin/tool graph per location, and every
+ * location needs its own registration for session/tool hooks to dispatch.
  *
  * Configuration (environment):
  *   AGENTGUARD_URL       base URL of the AgentGuard service
@@ -12,9 +25,18 @@
  *   AGENTGUARD_BREAKER   shield tool calls/prompt admission with breaker
  *                        status polling (default true)
  *
- * Options in opencode.json plugins entry are supported for V2
+ * Options in opencode.json plugins entry are supported:
  * ({package: "./.opencode/plugins/agentguard", options: {url, mode, breaker}}).
- */
+*/
+import { appendFileSync } from "node:fs";
+
+/** Hook/loop breadcrumbs (tmp; tiny + best-effort — never throws). */
+const _crumb = (msg) => {
+  if ((globalThis.__agentguardCrumbCount = (globalThis.__agentguardCrumbCount || 0) + 1) > 600) return;
+  try {
+    appendFileSync("/tmp/opencode/agentguard-plugin.log", `${Date.now()} ${msg}\n`);
+  } catch {}
+};
 
 const DEFAULTS = {
   url: process.env.AGENTGUARD_URL || "http://127.0.0.1:8907",
@@ -156,13 +178,21 @@ function isManagementText(t) {
 
 /* ------------------------------------------------------------------ V2 ---- */
 async function setup(ctx) {
-  // Exactly-once activation per process: OpenCode loads plugins from BOTH
-  // the global and the project plugin dirs, so a project that also has a
-  // copy (plus any watcher reload) would otherwise register every hook
-  // twice — duplicating events and firewall checks. First activation wins;
-  // later candidates in the SAME process register nothing.
-  if (globalThis.__agentguardActive) return {};
-  globalThis.__agentguardActive = true;
+  // Exactly-once activation per LOCATION: OpenCode compiles a full plugin
+  // graph per location directory (home root AND the project dir each get
+  // their own supervisor + hook registry), and loads this plugin from both
+  // the global and the project plugin dir. A process-wide guard would be
+  // claimed by whichever activates first and leave every other location
+  // with zero registered hooks — so key the guard on ctx.location.directory;
+  // both copies inside ONE location share the key (single registration).
+  const locDir = (ctx && ctx.location && ctx.location.directory) || "";
+  const guardKey = `__agentguardActive_${locDir}`;
+  _crumb(`setup enter loc=${locDir || "(none)"}`);
+  if (globalThis[guardKey]) {
+    _crumb(`setup guard-hit (${guardKey})`);
+    return;
+  }
+  globalThis[guardKey] = true;
 
   const cfg = { ...DEFAULTS };
   if (ctx.options && typeof ctx.options === "object") {
@@ -189,6 +219,7 @@ async function setup(ctx) {
     new Error(`agentguard: ${what} blocked — circuit breaker ${st.reason} (limits exceeded; approve/reset in AgentGuard)`);
 
   // --- prompt admission firewall -----------------------------------------
+  _crumb("setup registering session.hook=prompt");
   await ctx.session.hook("prompt", async (event) => {
     try {
       const sid = resolveSid(event);
@@ -234,6 +265,7 @@ async function setup(ctx) {
   });
 
   // --- tool-call firewall + telemetry ------------------------------------
+  _crumb("setup registering tool.hook=execute.before");
   await ctx.tool.hook("execute.before", async (event) => {
     try {
       const sid = resolveSid(event);
@@ -296,6 +328,7 @@ async function setup(ctx) {
     }
   });
 
+  _crumb("setup registering tool.hook=execute.after");
   await ctx.tool.hook("execute.after", async (event) => {
     try {
       const sid = resolveSid(event);
@@ -315,7 +348,9 @@ async function setup(ctx) {
 
   // --- event stream → monitoring ------------------------------------------
   const controller = new AbortController();
+  _crumb("setup starting event loop");
   void (async () => {
+    _crumb("event loop: entering subscribe");
     for await (const ev of ctx.event.subscribe({ signal: controller.signal })) {
       try {
         const type = ev?.type || "";
@@ -357,9 +392,16 @@ async function setup(ctx) {
         void 0;
       }
     }
-  })().catch(() => {});
+  })().catch((e) => _crumb("event loop FAILED: " + String(e?.message || e).slice(0, 160)));
 
-  return () => controller.abort();
+  // Cleanup = unload contract: stop the event loop and release the
+  // exactly-once guard so a watcher reload can re-activate this module
+  // instance (module-level state does not survive, but globalThis does).
+  return () => {
+    _crumb("cleanup invoked");
+    controller.abort();
+    delete globalThis[guardKey];
+  };
 }
 
 function circuitOpenBlock(what, v) {
@@ -369,123 +411,21 @@ function circuitOpenBlock(what, v) {
   );
 }
 
-/* ------------------------------------------------------------------ V1 ---- */
-function makeV1(cfg) {
-  const client = makeClient(cfg);
-  const enforce = () => cfg.mode === "enforce";
-  return {
-    async "chat.message"(input, output) {
-      // V1 equivalent of the prompt hook
-      try {
-        const text = output?.message?.text ?? "";
-        if (!text.trim() || !enforce()) return;
-        const sid = input?.sessionID || "unknown";
-        const brSid = await (async () => {
-          const st = cfg.breaker ? await client.breaker(sid) : null;
-          return st && (st.status === "stopped" || st.status === "breached") ? st : null;
-        })();
-        if (brSid) throw circuitOpenBlock("prompt", { decision_reason: `circuit ${brSid.status}` });
-        const v = await client.firewall({
-          text, session_id: sid, agent: "opencode", await_approval: true,
-          approval_timeout: 120,
-        });
-        if (v && enforce()) {
-          if (v.action === "sanitize") output.message.text = v.sanitized_text || text;
-          else if (v.action !== "allow" && v.action !== "approve")
-            throw circuitOpenBlock("prompt", v);
-          else if (v.action === "approve") { /* approval pending w/o UI in V1: block */ }
-        }
-      } catch (e) {
-        if (String(e?.message || "").startsWith("agentguard:")) throw e;
-      }
-    },
-    async "tool.execute.before"(input, output) {
-      let sid = (input && input.sessionID) || "unknown";
-      try {
-        let serialized = "";
-        try { serialized = JSON.stringify(output?.args || {}); } catch {}
-        if (isManagementText(serialized)) {
-          void client.sendEvent(sid, "tool_call", {
-            name: input?.tool, args_digest: sha(serialized || input?.tool),
-            args_preview: serialized.slice(0, 240), status: "management_pass",
-          });
-          return;
-        }
-        if (cfg.breaker) {
-          const st = await client.breaker(sid);
-          if (st && (st.status === "stopped" || st.status === "breached") && enforce())
-            throw circuitOpenBlock("tool call", { decision_reason: `circuit ${st.status}` });
-        }
-        void client.sendEvent(sid, "tool_call", {
-          name: input?.tool, args_digest: sha(serialized || input?.tool),
-          args_preview: serialized.slice(0, 240), status: "started",
-        });
-        const v = await client.firewall({
-          text: serialized.slice(0, 20000), session_id: sid, agent: "opencode",
-        });
-        if (v && enforce() && (v.action === "block"))
-          throw circuitOpenBlock("tool call", v);
-      } catch (e) {
-        if (String(e?.message || "").startsWith("agentguard:")) throw e;
-      }
-    },
-    async "tool.execute.after"(input, output) {
-      try {
-        void client.sendEvent((input && input.sessionID) || "unknown", "tool_call", {
-          name: input?.tool,
-          status: (output && output.status === "error") ? "error" : "success",
-          result_preview: String(output?.title || "").slice(0, 200),
-        });
-      } catch {}
-    },
-    async event({ event }) {
-      try {
-        const type = event?.type || "";
-        const props = event?.properties || {};
-        const info = props?.info || props;
-        const sid = info?.id || props?.sessionID;
-        if (!sid) return;
-        if (type === "session.updated" && !seenSessions.has(sid)) {
-          seenSessions.add(sid);
-          void client.sendEvent(sid, "session_start", {
-            model: info?.modelID, cwd: info?.directory,
-          });
-          void client.reportPid(sid);
-        }
-        const toks = extractTokens(props);
-        if (toks) void client.sendEvent(sid, "llm_call", toks);
-        if (type === "session.error") {
-          void client.sendEvent(sid, "error", { message: String(props?.error || type) });
-        }
-      } catch {}
-    },
-  };
-}
 
 /* --------------------------------------------------------------- export --- */
-let Plugin = null;
-try {
-  // @opencode/plugin exists on V2 runtime; absent on V1
-  const mod = await import("@opencode/plugin");
-  Plugin = mod.Plugin;
-} catch {
-  Plugin = null;
-}
-
-const cfgV1 = { ...DEFAULTS };
-
-const entry = Plugin
-  ? Plugin.define({ id: "agentguard", setup })
-  : { id: "agentguard" };
-
-if (!Plugin) {
-  entry.server = async () => {
-    // V2/V1 fallback share the same exactly-once rule (see setup above).
-    if (globalThis.__agentguardActive) return {};
-    globalThis.__agentguardActive = true;
-    return makeV1(cfgV1);
-  };
-}
-
+/* The loader (core/src/plugin/module.ts) validates ONLY `default` as
+ * { id, effect | setup } — setup must be a function and its return value is
+ * invoked as the unload cleanup when truthy (so it must be a cleanup or
+ * undefined). Named exports are ignored by the core loader. */
 export { isManagementText };
-export default entry;
+
+const moduleId = (() => {
+  try { return String(import.meta.url || ""); } catch { return ""; }
+})();
+// Global + project plugin dirs both activate in one process; the registrar
+// dies on "Duplicate plugin ID", so give the global copy a distinct id.
+const id = moduleId.includes("/.config/opencode/plugins")
+  ? "agentguard-global"
+  : "agentguard";
+
+export default { id, setup };

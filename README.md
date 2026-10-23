@@ -127,14 +127,25 @@ watchdog, always available; weaponize nothing else.
 OpenCode discovers plugins from `.opencode/plugins/` (project) and
 `~/.config/opencode/plugins/` (global). A project install only covers
 sessions opened **inside that directory**; `install.sh --global` covers
-everything. Because OpenCode loads hooks from both sources in sequence
-(global first), the plugin carries an **exactly-once guard**
-(`globalThis.__agentguardActive`): the second copy in the same process
-registers no hooks, so double installs duplicate nothing. Keep both copies
-in sync after edits (or keep only one).
+everything. OpenCode compiles a separate plugin graph **per location
+directory** (home root and a project dir each get their own hook
+registries), and loads hooks from both sources per location — so the
+exactly-once guard is keyed per location (`globalThis.__agentguardActive_<dir>`),
+and each copy gets a distinct plugin id (`agentguard-global` vs `agentguard`,
+derived from the module path) to keep the registrar happy. Within one
+location the second copy registers nothing; each location registers once.
 
-Restart cadence: the OpenCode service loads plugins at boot only — run
-`opencode service restart` after installs or plugin edits. Claude Code
+Entry contract (verified against the 2.1.3 loader): the module's default
+export must be `{ id, setup }`; `setup(ctx)` registers hooks by calling
+`ctx.session.hook("prompt")` / `ctx.tool.hook("execute.before"|"execute.after")`
+/ `ctx.event.subscribe()` and returns an **unload cleanup function**
+(a hooks object or any other truthy non-function return is invoked as
+cleanup and throws `TypeError`). Returning nothing is also valid.
+
+Reload cadence: the OpenCode service watcher hot-reloads changed plugin
+files within ~1s — no `opencode service restart` needed after installs or
+edits (watch for `loading plugin` lines in
+`~/.local/share/opencode/log/opencode.log`). Claude Code
 hooks reload per session; Codex hooks reload per Codex process.
 
 ### Codex: full lifecycle hooks, per-project sessions
