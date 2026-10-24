@@ -15,6 +15,9 @@ export function useLiveFeed(selected: string | null) {
   const [events, setEvents] = useState<AgentEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [pulse, setPulse] = useState(0);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const ref = useRef<WebSocket | null>(null);
   const attempt = useRef(0);
   const selectedRef = useRef(selected);
@@ -27,6 +30,10 @@ export function useLiveFeed(selected: string | null) {
     // session filter changed → rebuild the feed and the dedup set
     seenIds.current = new Set();
     setEvents([]);
+    setConnected(false);
+    setLoaded(false);
+    setError("");
+    setLastUpdated(null);
     let dead = false;
     let timer: ReturnType<typeof setTimeout>;
     let poll: ReturnType<typeof setInterval> | undefined;
@@ -35,28 +42,40 @@ export function useLiveFeed(selected: string | null) {
       try {
         const r = await api.events({
           session_id: selectedRef.current ?? undefined,
-          limit: 80,
+          limit: REPLAY,
           order: "desc",
         });
+        if (dead) return;
+        setLoaded(true);
+        setError("");
+        setLastUpdated(Date.now());
         const unseen = (r.events as AgentEvent[]).filter(
           e => !seenIds.current.has(e.id));
         if (dead || unseen.length === 0) return;
         unseen.forEach(e => seenIds.current.add(e.id));
         setEvents(prev => {
           const merged = [...unseen, ...prev];
-          merged.sort((a, b) => b.ts - a.ts); // newest first, stable
+          merged.sort((a, b) => b.ts - a.ts); // newest to oldest
           return merged.slice(0, FEED_MAX);
         });
         setPulse(p => p + 1);
       } catch {
-        // service down; the WS retry loop handles visibility
+        if (!dead) setError("Couldn't refresh event history. Last received events are kept in view.");
       }
     };
 
     const accept = (e: AgentEvent) => {
+      if (dead) return;
+      setLoaded(true);
+      setError("");
+      setLastUpdated(Date.now());
       if (seenIds.current.has(e.id)) return;
       seenIds.current.add(e.id);
-      setEvents(prev => [e, ...prev].slice(0, FEED_MAX));
+      setEvents(prev => {
+        const merged = [e, ...prev];
+        merged.sort((a, b) => b.ts - a.ts); // newest to oldest
+        return merged.slice(0, FEED_MAX);
+      });
     };
 
     const open = () => {
@@ -64,6 +83,7 @@ export function useLiveFeed(selected: string | null) {
       const ws = new WebSocket(wsUrl(selectedRef.current, REPLAY));
       ref.current = ws;
       ws.onopen = () => {
+        if (dead) return;
         attempt.current = 0;
         setConnected(true);
         void backfill(); // catch up on rows missed during the outage
@@ -83,6 +103,7 @@ export function useLiveFeed(selected: string | null) {
         }
       };
       ws.onclose = () => {
+        if (dead) return;
         setConnected(false);
         const delay = Math.min(8000, 500 * 2 ** attempt.current++);
         if (!dead) timer = setTimeout(open, delay);
@@ -106,5 +127,5 @@ export function useLiveFeed(selected: string | null) {
     setEvents([]);
     seenIds.current = new Set();
   };
-  return { events, connected, pulse, clear };
+  return { events, connected, pulse, clear, loaded, error, lastUpdated };
 }

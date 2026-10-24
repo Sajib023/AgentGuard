@@ -76,6 +76,48 @@ class Database:
                     k TEXT PRIMARY KEY,
                     v TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS rag_chunks (
+                    id TEXT PRIMARY KEY,
+                    doc_id TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    severity TEXT NOT NULL DEFAULT 'high',
+                    action TEXT NOT NULL DEFAULT 'block',
+                    context_prefix TEXT NOT NULL,
+                    chunk_text TEXT NOT NULL,
+                    combined_text TEXT NOT NULL,
+                    embedding TEXT NOT NULL,
+                    token_sigs TEXT NOT NULL,
+                    metadata TEXT NOT NULL DEFAULT '{}',
+                    created_ts REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_rag_chunks_cat ON rag_chunks(category);
+                CREATE INDEX IF NOT EXISTS idx_rag_chunks_doc ON rag_chunks(doc_id);
+                CREATE TABLE IF NOT EXISTS kg_nodes (
+                    id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL,
+                    label TEXT NOT NULL,
+                    session_id TEXT,
+                    risk_level TEXT NOT NULL DEFAULT 'low',
+                    props TEXT NOT NULL DEFAULT '{}',
+                    updated_ts REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_kg_nodes_session ON kg_nodes(session_id);
+                CREATE INDEX IF NOT EXISTS idx_kg_nodes_kind ON kg_nodes(kind);
+                CREATE TABLE IF NOT EXISTS kg_edges (
+                    id TEXT PRIMARY KEY,
+                    src TEXT NOT NULL,
+                    dst TEXT NOT NULL,
+                    relation TEXT NOT NULL,
+                    session_id TEXT,
+                    weight REAL NOT NULL DEFAULT 1.0,
+                    props TEXT NOT NULL DEFAULT '{}',
+                    ts REAL NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_kg_edges_src ON kg_edges(src);
+                CREATE INDEX IF NOT EXISTS idx_kg_edges_dst ON kg_edges(dst);
+                CREATE INDEX IF NOT EXISTS idx_kg_edges_session ON kg_edges(session_id);
                 """
             )
             # migrations beyond CREATE IF NOT EXISTS
@@ -83,6 +125,27 @@ class Database:
                 cur.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT")
             except sqlite3.OperationalError:
                 pass  # column already exists
+            # Backfill any sessions present in events but missing in sessions table
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO sessions (
+                    session_id, agent, first_ts, last_ts,
+                    prompt_count, tool_calls, llm_calls
+                )
+                SELECT
+                    e.session_id,
+                    MAX(e.agent),
+                    MIN(e.ts),
+                    MAX(e.ts),
+                    SUM(CASE WHEN e.type = 'prompt_before' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN e.type = 'tool_call' THEN 1 ELSE 0 END),
+                    SUM(CASE WHEN e.type = 'llm_call' THEN 1 ELSE 0 END)
+                FROM events e
+                LEFT JOIN sessions s ON s.session_id = e.session_id
+                WHERE s.session_id IS NULL AND e.session_id != 'system'
+                GROUP BY e.session_id
+                """
+            )
             self._conn.commit()
 
     # -- execution ---------------------------------------------------------

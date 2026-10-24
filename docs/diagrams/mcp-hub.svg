@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 470" width="100%" height="auto" font-family="'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace">
+  <defs>
+    <linearGradient id="bgGrad3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#050608"/>
+      <stop offset="100%" stop-color="#0a0e14"/>
+    </linearGradient>
+    <marker id="arrV" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#b388ff"/>
+    </marker>
+    <marker id="arrC3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#00e5ff"/>
+    </marker>
+  </defs>
+
+  <rect width="1100" height="470" rx="10" fill="url(#bgGrad3)" stroke="#1e2633" stroke-width="2"/>
+
+  <!-- Header -->
+  <rect x="20" y="16" width="1060" height="38" rx="6" fill="#0d1117" stroke="#b388ff" stroke-opacity="0.45"/>
+  <text x="38" y="40" fill="#f3f5f8" font-size="13.5" font-weight="bold" letter-spacing="0.8">MODEL CONTEXT PROTOCOL (MCP) HUB — 3 BUILT SERVERS + 3 EXTERNAL CONNECTORS</text>
+  <text x="1060" y="40" fill="#b388ff" font-size="11" text-anchor="end">Protocol 2024-11-05 · STDIO · SSE · JSON-RPC 2.0</text>
+
+  <!-- Transport Bar -->
+  <rect x="20" y="68" width="1060" height="46" rx="6" fill="#0b0f17" stroke="#00e5ff" stroke-opacity="0.4"/>
+  <text x="36" y="95" fill="#00e5ff" font-size="10.5" font-weight="bold">TRANSPORTS:</text>
+  <text x="135" y="95" fill="#f3f5f8" font-size="10">1. STDIO: <tspan fill="#00ff88">agentguard mcp --server &lt;id&gt;</tspan></text>
+  <text x="455" y="95" fill="#f3f5f8" font-size="10">2. SSE: <tspan fill="#00e5ff">GET /v1/mcp/sse?server=&lt;id&gt;</tspan></text>
+  <text x="755" y="95" fill="#f3f5f8" font-size="10">3. Streamable HTTP: <tspan fill="#b388ff">POST /v1/mcp/rpc</tspan></text>
+
+  <!-- 3 BUILT MCP SERVERS -->
+  <text x="24" y="138" fill="#00ff88" font-size="11" font-weight="bold" letter-spacing="0.6">A. 3 CUSTOM BUILT AGENTGUARD MCP SERVERS (10 Tools · 5 agentguard:// Resources)</text>
+
+  <!-- Server 1 -->
+  <rect x="20" y="150" width="342" height="150" rx="6" fill="#0b0f17" stroke="#00ff88" stroke-opacity="0.5" stroke-width="1.5"/>
+  <text x="34" y="172" fill="#00ff88" font-size="11" font-weight="bold">1. agentguard-firewall-mcp</text>
+  <text x="34" y="192" fill="#f3f5f8" font-size="9.5">Tools:</text>
+  <text x="42" y="208" fill="#00e5ff" font-size="9">⚙ inspect_prompt_or_tool(text, session_id)</text>
+  <text x="42" y="223" fill="#00e5ff" font-size="9">⚙ redact_secrets(text)</text>
+  <text x="42" y="238" fill="#00e5ff" font-size="9">⚙ search_threat_rag(query, top_k, category)</text>
+  <text x="34" y="258" fill="#8c96a8" font-size="8.8">Resource: <tspan fill="#dbe0ea">agentguard://firewall/rules</tspan></text>
+  <text x="34" y="276" fill="#ffaa00" font-size="8.5">Boundary: Stateless inspect; read-only RAG</text>
+
+  <!-- Server 2 -->
+  <rect x="379" y="150" width="342" height="150" rx="6" fill="#0b0f17" stroke="#00e5ff" stroke-opacity="0.5" stroke-width="1.5"/>
+  <text x="393" y="172" fill="#00e5ff" font-size="11" font-weight="bold">2. agentguard-breaker-mcp</text>
+  <text x="393" y="192" fill="#f3f5f8" font-size="9.5">Tools:</text>
+  <text x="401" y="208" fill="#00e5ff" font-size="9">⚙ get_session_budget(session_id)</text>
+  <text x="401" y="223" fill="#00e5ff" font-size="9">⚙ set_session_limits(session_id, limits)</text>
+  <text x="401" y="238" fill="#00e5ff" font-size="9">⚙ reset_circuit_breaker(session_id)</text>
+  <text x="401" y="253" fill="#00e5ff" font-size="9">⚙ list_pending_approvals(session_id)</text>
+  <text x="393" y="271" fill="#8c96a8" font-size="8.5">URI: <tspan fill="#dbe0ea">agentguard://sessions/active &amp; breaker/snapshots</tspan></text>
+  <text x="393" y="287" fill="#ffaa00" font-size="8.5">Boundary: Mutations logged as state_change</text>
+
+  <!-- Server 3 -->
+  <rect x="738" y="150" width="342" height="150" rx="6" fill="#0b0f17" stroke="#b388ff" stroke-opacity="0.5" stroke-width="1.5"/>
+  <text x="752" y="172" fill="#b388ff" font-size="11" font-weight="bold">3. agentguard-lineage-mcp</text>
+  <text x="752" y="192" fill="#f3f5f8" font-size="9.5">Tools (Cloudflare Tunnel Ready):</text>
+  <text x="760" y="208" fill="#00e5ff" font-size="9">⚙ trace_attack_graph(query, session_id, hops)</text>
+  <text x="760" y="223" fill="#00e5ff" font-size="9">⚙ ingest_security_policy(title, content, ...)</text>
+  <text x="760" y="238" fill="#00e5ff" font-size="9">⚙ export_compliance_audit(session_id)</text>
+  <text x="752" y="258" fill="#8c96a8" font-size="8.8">URI: <tspan fill="#dbe0ea">agentguard://rag/status &amp; graph/lineage</tspan></text>
+  <text x="752" y="276" fill="#ffaa00" font-size="8.5">Boundary: Auto-redacts secrets pre-index</text>
+
+  <!-- 3 EXTERNAL MCP CONNECTORS -->
+  <text x="24" y="328" fill="#ffaa00" font-size="11" font-weight="bold" letter-spacing="0.6">B. 3 INTEGRATED EXTERNAL MCP CONNECTORS (WITH LEAST-PRIVILEGE PERMISSION BOUNDARIES)</text>
+
+  <rect x="20" y="340" width="342" height="110" rx="6" fill="#0b0f17" stroke="#2b3548" stroke-width="1.5"/>
+  <text x="34" y="362" fill="#f3f5f8" font-size="10.5" font-weight="bold">1. postgres-mcp</text>
+  <text x="34" y="379" fill="#00e5ff" font-size="8.8">@modelcontextprotocol/server-postgres</text>
+  <text x="34" y="397" fill="#8c96a8" font-size="8.8">Role: Analytical SQL &amp; pgvector similarity mirror</text>
+  <text x="34" y="415" fill="#ffaa00" font-size="8.8">Boundary: SELECT-only DB role; DDL/DML blocked</text>
+
+  <rect x="379" y="340" width="342" height="110" rx="6" fill="#0b0f17" stroke="#2b3548" stroke-width="1.5"/>
+  <text x="393" y="362" fill="#f3f5f8" font-size="10.5" font-weight="bold">2. github-mcp</text>
+  <text x="393" y="379" fill="#00e5ff" font-size="8.8">@modelcontextprotocol/server-github</text>
+  <text x="393" y="397" fill="#8c96a8" font-size="8.8">Role: Syncs SECURITY.md &amp; files incident issues</text>
+  <text x="393" y="415" fill="#ffaa00" font-size="8.8">Boundary: contents:read &amp; issues:write only</text>
+
+  <rect x="738" y="340" width="342" height="110" rx="6" fill="#0b0f17" stroke="#2b3548" stroke-width="1.5"/>
+  <text x="752" y="362" fill="#f3f5f8" font-size="10.5" font-weight="bold">3. fetch-mcp</text>
+  <text x="752" y="379" fill="#00e5ff" font-size="8.8">@modelcontextprotocol/server-fetch</text>
+  <text x="752" y="397" fill="#8c96a8" font-size="8.8">Role: Stage-1 MITRE ATLAS / OWASP / CVE ingest</text>
+  <text x="752" y="415" fill="#ffaa00" font-size="8.8">Boundary: Allowlisted HTTPS domains only</text>
+</svg>

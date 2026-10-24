@@ -61,6 +61,57 @@ export interface ApprovalRow {
 export interface Health {
   status: string; version: string; uptime_seconds: number;
   sessions_tracked: number; llm_guard: string | null; observe_mode: boolean;
+  rag_chunks?: number; mcp_servers?: number;
+}
+
+export interface RAGHit {
+  chunk_id: string;
+  doc_id: string;
+  source: string;
+  title: string;
+  category: string;
+  severity: string;
+  action: string;
+  context_prefix: string;
+  chunk_text: string;
+  dense_score: number;
+  colbert_maxsim: number;
+  hybrid_score: number;
+  metadata?: Record<string, any>;
+}
+
+export interface RAGStatus {
+  status: string;
+  documents_indexed: number;
+  contextual_chunks: number;
+  kg_nodes: number;
+  kg_edges: number;
+  categories: Record<string, number>;
+  techniques: Record<string, any>;
+}
+
+export interface MCPStatus {
+  protocol_version: string;
+  transports_supported: string[];
+  built_servers: Array<{
+    id: string;
+    name: string;
+    transports: string[];
+    tools: Array<{ name: string; description: string }>;
+  }>;
+  external_servers: Array<{
+    id: string;
+    package: string;
+    transport: string;
+    role: string;
+    status: string;
+  }>;
+  counts: {
+    built_servers: number;
+    external_servers: number;
+    total_tools: number;
+    total_resources: number;
+  };
 }
 
 export interface WsMessage {

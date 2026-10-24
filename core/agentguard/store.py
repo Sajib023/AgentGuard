@@ -36,7 +36,7 @@ class Store:
                 sets.append(f"{col}=?")
                 args.append(val)
 
-            if et is EventType.session_start:
+            if event.session_id != "system":
                 sess = conn.execute(
                     "SELECT 1 FROM sessions WHERE session_id=?", (event.session_id,)
                 ).fetchone()
@@ -48,9 +48,17 @@ class Store:
                         (event.session_id, event.agent.value, event.ts, event.ts,
                          data.get("pid"), data.get("ppid"), data.get("model"), cwd),
                     )
-                    return  # fresh session: nothing else arrives with this event
-                if cwd:
-                    add("cwd", cwd)  # re-registration refreshes project dir
+                    if et is EventType.session_start:
+                        return  # fresh session_start: nothing else arrives with this event
+                elif et is EventType.session_start:
+                    if cwd:
+                        add("cwd", cwd)  # re-registration refreshes project dir
+                    if data.get("model"):
+                        add("model", data["model"])
+                    if data.get("pid") is not None:
+                        add("pid", data["pid"])
+                    if data.get("ppid") is not None:
+                        add("ppid", data["ppid"])
             if et is EventType.session_end:
                 add("end_ts", event.ts)
             if et is EventType.prompt_before:
@@ -70,6 +78,10 @@ class Store:
                     add("cost_usd", self.num_col(conn, "cost_usd", event.session_id) + float(cost))
                 if data.get("iteration") is not None:
                     add("last_iteration", int(data["iteration"]))
+                if data.get("model"):
+                    cur = conn.execute("SELECT model FROM sessions WHERE session_id=?", (event.session_id,)).fetchone()
+                    if cur and not cur["model"]:
+                        add("model", str(data["model"]))
             if et is EventType.graph_event and data.get("iteration") is not None:
                 add("last_iteration", int(data["iteration"]))
             if event.type in (EventType.state_change,) and data.get("state"):
@@ -116,7 +128,7 @@ class Store:
             sql += " AND ts>?"
             params.append(since)
         sql += f" ORDER BY ts {'DESC' if order == 'desc' else 'ASC'} LIMIT ?"
-        params.append(max(1, min(limit, 1000)))
+        params.append(max(1, min(limit, 50000)))
         return [Event(**row_to_event(r)) for r in self.db.query(sql, tuple(params))]
 
     def prune(self, older_than_ts: float) -> int:

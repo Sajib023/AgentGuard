@@ -19,32 +19,45 @@ cp "$HOOK_SRC" "$CODEX_HOME/hooks/agentguard_codex_hook.py"
 echo "installed: $CODEX_HOME/hooks/agentguard_codex_hook.py"
 
 HOOKS_JSON="$CODEX_HOME/hooks.json"
-if [[ -e "$HOOKS_JSON" ]]; then
-  echo
-  echo "NOT installed: $HOOKS_JSON already exists — merge manually instead of"
-  echo "clobbering your existing hooks. Reference definition:"
-  echo "  $SCRIPT_DIR/hooks.json.example"
-  echo
-  echo "Required events (type=command, script above):"
-  echo "  SessionStart, UserPromptSubmit, PreToolUse, PostToolUse,"
-  echo "  PermissionRequest, SubagentStart, SubagentStop, Stop, SessionEnd"
-  exit 0
-fi
 
 python3 - "$SCRIPT_DIR/hooks.json.example" "$HOOKS_JSON" <<'PY'
-import json, os, pathlib, sys
+import json, pathlib, sys
 src, dst = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-script = str(dst.parent / "hooks" / "agentguard_codex_hook.py")
-doc = json.loads(src.read_text())
-doc.pop("_comment", None)
-for groups in doc.get("hooks", {}).values():
-    for g in groups:
+script = "python3 " + str(dst.parent / "hooks" / "agentguard_codex_hook.py")
+template = json.loads(src.read_text(encoding="utf-8"))
+doc = {}
+if dst.is_file():
+    try:
+        loaded = json.loads(dst.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            doc = loaded
+    except Exception:
+        pass
+doc.setdefault("description", template.get("description", "AgentGuard lifecycle hooks"))
+hooks_map = doc.setdefault("hooks", {})
+for ev, groups in template.get("hooks", {}).items():
+    new_groups = json.loads(json.dumps(groups))
+    for g in new_groups:
+        g.pop("_comment", None)
         for h in g.get("hooks", []):
-            h["command"] = "python3 " + script
-dst.write_text(json.dumps(doc, indent=2) + "\n")
+            h["command"] = script
+    existing = hooks_map.get(ev, []) if isinstance(hooks_map.get(ev), list) else []
+    cleaned = []
+    for grp in existing:
+        if isinstance(grp, dict) and isinstance(grp.get("hooks"), list):
+            kept = [h for h in grp["hooks"] if not (isinstance(h, dict) and "agentguard_codex_hook.py" in str(h.get("command", "")))]
+            if kept:
+                gcopy = dict(grp)
+                gcopy["hooks"] = kept
+                cleaned.append(gcopy)
+        else:
+            cleaned.append(grp)
+    cleaned.extend(new_groups)
+    hooks_map[ev] = cleaned
+dst.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
 PY
 
-echo "installed: $HOOKS_JSON"
+echo "installed (merged): $HOOKS_JSON"
 echo
 echo "NEXT: open Codex and run /hooks — review + trust the AgentGuard hooks."
 echo "Without trust, Codex will skip them (policy: hooks must be reviewed)."

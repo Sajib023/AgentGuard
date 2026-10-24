@@ -44,8 +44,9 @@ class FirewallResult(BaseModel):
 
 
 class FirewallEngine:
-    def __init__(self, config: FirewallConfig):
+    def __init__(self, config: FirewallConfig, rag: Any | None = None):
         self.config = config
+        self.rag = rag
         lg = config.llm_guard
         self.llm = LlamaGuardClient(
             endpoint=lg.endpoint,
@@ -64,6 +65,7 @@ class FirewallEngine:
         *,
         direction: str = "inbound",
         context_type: str = "prompt",
+        session_id: str | None = None,
     ) -> FirewallResult:
         t0 = time.perf_counter()
         cfg = self.config
@@ -102,6 +104,28 @@ class FirewallEngine:
                     kind="secret", rule=f"secret.{m['type']}", snippet=m["preview"],
                     span=m["span"], confidence=m["confidence"], weight=40.0,
                     description=f"sensitive material: {m['type']}"))
+
+        # 3.5) Contextual RAG + ColBERT Late-Interaction + GraphRAG multi-hop lineage
+        if self.rag is not None and text.strip():
+            rag_info = self.rag.inspect_for_firewall(
+                text, session_id=session_id, context_type=context_type
+            )
+            meta["rag"] = {
+                "top_matches": rag_info.get("hits", []),
+                "sensitive_touched": rag_info.get("sensitive_touched", []),
+                "network_sinks": rag_info.get("network_sinks", []),
+                "exfiltration_chains": len(rag_info.get("exfiltration_chains", [])),
+            }
+            for chain in rag_info.get("exfiltration_chains", []):
+                violations.append(Violation(
+                    kind="exfiltration",
+                    rule=f"graphrag.{chain['tactic']}",
+                    snippet=f"{chain['sensitive_artifact']} -> {chain['external_sink']}",
+                    confidence=chain["confidence"],
+                    weight=chain["weight"],
+                    description=chain["tactic_name"],
+                    details=" | ".join(chain["hops"]),
+                ))
 
         # 4) Llama Guard 3 tier (beside rules+heuristics, never replacing them)
         if self.llm_enabled and text.strip():

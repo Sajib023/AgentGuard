@@ -1,0 +1,169 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 680" width="100%" height="auto" font-family="'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace">
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#050608"/>
+      <stop offset="100%" stop-color="#0a0e14"/>
+    </linearGradient>
+    <marker id="arrowCyan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#00e5ff"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#00ff88"/>
+    </marker>
+    <marker id="arrowViolet" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#b388ff"/>
+    </marker>
+    <marker id="arrowAmber" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#ffaa00"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="680" rx="10" fill="url(#bgGrad)" stroke="#1e2633" stroke-width="2"/>
+
+  <!-- Header Banner -->
+  <rect x="20" y="16" width="1060" height="40" rx="6" fill="#0d1117" stroke="#00ff88" stroke-opacity="0.4"/>
+  <circle cx="42" cy="36" r="6" fill="#00ff88"/>
+  <text x="58" y="41" fill="#f3f5f8" font-size="14" font-weight="bold" letter-spacing="1">AGENTGUARD — SYSTEM ARCHITECTURE (LOCAL-FIRST RUNTIME SECURITY &amp; GOVERNANCE)</text>
+  <text x="1060" y="41" fill="#00e5ff" font-size="11" text-anchor="end">FastAPI :8907 · SQLite · Ollama</text>
+
+  <!-- LEFT COLUMN: Coding Agents & MCP Clients -->
+  <rect x="20" y="72" width="215" height="445" rx="8" fill="#090c12" stroke="#2b3548" stroke-width="1.5"/>
+  <text x="34" y="96" fill="#00e5ff" font-size="11" font-weight="bold" letter-spacing="0.8">1. CODING AGENTS &amp; CLIENTS</text>
+
+  <rect x="34" y="112" width="187" height="62" rx="5" fill="#101520" stroke="#00e5ff" stroke-opacity="0.45"/>
+  <text x="46" y="132" fill="#f3f5f8" font-size="12" font-weight="bold">OpenCode Plugin</text>
+  <text x="46" y="149" fill="#8c96a8" font-size="9.5">prompt &amp; tool.execute hooks</text>
+  <text x="46" y="163" fill="#00ff88" font-size="9">In-place arg sanitization</text>
+
+  <rect x="34" y="186" width="187" height="62" rx="5" fill="#101520" stroke="#00e5ff" stroke-opacity="0.45"/>
+  <text x="46" y="206" fill="#f3f5f8" font-size="12" font-weight="bold">Claude Code Hooks</text>
+  <text x="46" y="223" fill="#8c96a8" font-size="9.5">UserPromptSubmit / PreToolUse</text>
+  <text x="46" y="237" fill="#00ff88" font-size="9">PostToolUse / Approval Hold</text>
+
+  <rect x="34" y="260" width="187" height="62" rx="5" fill="#101520" stroke="#00e5ff" stroke-opacity="0.45"/>
+  <text x="46" y="280" fill="#f3f5f8" font-size="12" font-weight="bold">Codex CLI Hooks</text>
+  <text x="46" y="297" fill="#8c96a8" font-size="9.5">SessionStart / PreToolUse</text>
+  <text x="46" y="311" fill="#00ff88" font-size="9">updatedInput secret rewrite</text>
+
+  <rect x="34" y="334" width="187" height="62" rx="5" fill="#101520" stroke="#00e5ff" stroke-opacity="0.45"/>
+  <text x="46" y="354" fill="#f3f5f8" font-size="12" font-weight="bold">LangGraph Handler</text>
+  <text x="46" y="371" fill="#8c96a8" font-size="9.5">AgentGuardLangGraphHandler</text>
+  <text x="46" y="385" fill="#00ff88" font-size="9">Node / Edge / LLM / Tool events</text>
+
+  <rect x="34" y="408" width="187" height="92" rx="5" fill="#101520" stroke="#b388ff" stroke-opacity="0.55"/>
+  <text x="46" y="428" fill="#b388ff" font-size="12" font-weight="bold">MCP Clients &amp; Hosts</text>
+  <text x="46" y="445" fill="#8c96a8" font-size="9.5">• stdio: agentguard mcp</text>
+  <text x="46" y="460" fill="#8c96a8" font-size="9.5">• SSE: /v1/mcp/sse</text>
+  <text x="46" y="475" fill="#8c96a8" font-size="9.5">• JSON-RPC: /v1/mcp/rpc</text>
+  <text x="46" y="490" fill="#00e5ff" font-size="9">Cloudflare Tunnel ready</text>
+
+  <!-- Arrows from Agents to Core -->
+  <line x1="235" y1="220" x2="275" y2="220" stroke="#00e5ff" stroke-width="2" marker-end="url(#arrowCyan)"/>
+  <line x1="235" y1="450" x2="275" y2="450" stroke="#b388ff" stroke-width="2" marker-end="url(#arrowViolet)"/>
+
+  <!-- CENTER COLUMN: AgentGuard Core Engine -->
+  <rect x="278" y="72" width="540" height="445" rx="8" fill="#090c12" stroke="#00ff88" stroke-opacity="0.5" stroke-width="1.5"/>
+  <text x="294" y="96" fill="#00ff88" font-size="11" font-weight="bold" letter-spacing="0.8">2. AGENTGUARD CORE ENGINE (FastAPI · 127.0.0.1:8907)</text>
+
+  <!-- 5-Tier Firewall Box -->
+  <rect x="294" y="110" width="508" height="115" rx="6" fill="#0f141d" stroke="#ff3355" stroke-opacity="0.55"/>
+  <text x="308" y="130" fill="#ff3355" font-size="11" font-weight="bold">5-TIER PROMPT &amp; TOOL FIREWALL (POST /v1/firewall/check)</text>
+
+  <rect x="306" y="140" width="90" height="50" rx="4" fill="#080a0f" stroke="#2b3548"/>
+  <text x="351" y="158" fill="#f3f5f8" font-size="9.5" font-weight="bold" text-anchor="middle">Tier 1: Rules</text>
+  <text x="351" y="174" fill="#8c96a8" font-size="8.5" text-anchor="middle">21 Regex Rules</text>
+
+  <rect x="404" y="140" width="92" height="50" rx="4" fill="#080a0f" stroke="#2b3548"/>
+  <text x="450" y="158" fill="#f3f5f8" font-size="9.5" font-weight="bold" text-anchor="middle">Tier 2: Heur</text>
+  <text x="450" y="174" fill="#8c96a8" font-size="8.5" text-anchor="middle">Base64/Homoglyph</text>
+
+  <rect x="504" y="140" width="90" height="50" rx="4" fill="#080a0f" stroke="#2b3548"/>
+  <text x="549" y="158" fill="#ffaa00" font-size="9.5" font-weight="bold" text-anchor="middle">Tier 3: Secrets</text>
+  <text x="549" y="174" fill="#8c96a8" font-size="8.5" text-anchor="middle">[REDACTED:kind]</text>
+
+  <rect x="602" y="140" width="92" height="50" rx="4" fill="#080a0f" stroke="#00e5ff" stroke-opacity="0.6"/>
+  <text x="648" y="158" fill="#00e5ff" font-size="9.5" font-weight="bold" text-anchor="middle">Tier 3.5: RAG</text>
+  <text x="648" y="174" fill="#8c96a8" font-size="8.5" text-anchor="middle">ColBERT+GraphRAG</text>
+
+  <rect x="702" y="140" width="88" height="50" rx="4" fill="#080a0f" stroke="#00ff88" stroke-opacity="0.6"/>
+  <text x="746" y="158" fill="#00ff88" font-size="9.5" font-weight="bold" text-anchor="middle">Tier 4: LLM</text>
+  <text x="746" y="174" fill="#8c96a8" font-size="8.5" text-anchor="middle">Llama Guard 3</text>
+
+  <text x="308" y="212" fill="#dbe0ea" font-size="9.5">Policy Voter → <tspan fill="#00ff88" font-weight="bold">ALLOW</tspan> · <tspan fill="#ffaa00" font-weight="bold">SANITIZE</tspan> · <tspan fill="#b388ff" font-weight="bold">APPROVE (Hold)</tspan> · <tspan fill="#ff3355" font-weight="bold">BLOCK</tspan></text>
+
+  <!-- 5-Stage Threat RAG & GraphRAG Box -->
+  <rect x="294" y="236" width="508" height="122" rx="6" fill="#0f141d" stroke="#00e5ff" stroke-opacity="0.55"/>
+  <text x="308" y="256" fill="#00e5ff" font-size="11" font-weight="bold">5-STAGE THREAT-RAG &amp; GRAPHRAG LINEAGE ENGINE (/v1/rag/* · /v1/graph/*)</text>
+  <text x="308" y="276" fill="#dbe0ea" font-size="9.5">1. Sources: MITRE ATLAS (AML.T0048/T0051/T0054) + OWASP LLM Top 10 (2025) + Custom Policies</text>
+  <text x="308" y="293" fill="#dbe0ea" font-size="9.5">2. Variable Semantic Boundary Chunking (cosine-similarity valleys &lt; 0.38, 90..520 chars)</text>
+  <text x="308" y="310" fill="#dbe0ea" font-size="9.5">3. Secret Redaction + Anthropic Contextual RAG Prefix prepended prior to embedding</text>
+  <text x="308" y="327" fill="#dbe0ea" font-size="9.5">4. Hybrid Retrieval: 45% Dense Vector Cosine + 55% ColBERT Token-Level MaxSim Reranker</text>
+  <text x="308" y="344" fill="#00ff88" font-size="9.5">5. GraphRAG KG: (Session) -[READ_SENSITIVE]-&gt; (.env) -[EXFILTRATION_PATH]-&gt; (curl/Sink)</text>
+
+  <!-- Circuit Breaker & MCP Hub Row -->
+  <rect x="294" y="370" width="248" height="132" rx="6" fill="#0f141d" stroke="#ffaa00" stroke-opacity="0.55"/>
+  <text x="306" y="390" fill="#ffaa00" font-size="10.5" font-weight="bold">CIRCUIT BREAKER &amp; APPROVALS</text>
+  <text x="306" y="409" fill="#8c96a8" font-size="9">• Token / Cost / Turn / Error budgets</text>
+  <text x="306" y="425" fill="#8c96a8" font-size="9">• Loop detection (Repeats, A-B cycles)</text>
+  <text x="306" y="441" fill="#8c96a8" font-size="9">• Actions: alert | pause | SIGTERM kill</text>
+  <text x="306" y="457" fill="#00ff88" font-size="9">• SQLite-persistent session overrides</text>
+  <text x="306" y="473" fill="#00e5ff" font-size="9">• Operator management escape hatch</text>
+
+  <rect x="554" y="370" width="248" height="132" rx="6" fill="#0f141d" stroke="#b388ff" stroke-opacity="0.55"/>
+  <text x="566" y="390" fill="#b388ff" font-size="10.5" font-weight="bold">MCP HUB (3 BUILT + 3 EXTERNAL)</text>
+  <text x="566" y="409" fill="#f3f5f8" font-size="9">Built (stdio · SSE · JSON-RPC):</text>
+  <text x="566" y="424" fill="#00e5ff" font-size="8.8"> • agentguard-firewall-mcp (3 tools)</text>
+  <text x="566" y="438" fill="#00e5ff" font-size="8.8"> • agentguard-breaker-mcp (4 tools)</text>
+  <text x="566" y="452" fill="#00e5ff" font-size="8.8"> • agentguard-lineage-mcp (3 tools)</text>
+  <text x="566" y="469" fill="#f3f5f8" font-size="9">External (Permission-Bounded):</text>
+  <text x="566" y="484" fill="#8c96a8" font-size="8.8"> • postgres-mcp · github-mcp · fetch-mcp</text>
+
+  <!-- RIGHT COLUMN: AMOLED Dashboard -->
+  <line x1="818" y1="260" x2="858" y2="260" stroke="#00ff88" stroke-width="2" marker-end="url(#arrowGreen)"/>
+
+  <rect x="860" y="72" width="220" height="445" rx="8" fill="#090c12" stroke="#00e5ff" stroke-opacity="0.5" stroke-width="1.5"/>
+  <text x="874" y="96" fill="#00e5ff" font-size="11" font-weight="bold" letter-spacing="0.8">3. AMOLED DASHBOARD</text>
+
+  <rect x="874" y="112" width="192" height="120" rx="5" fill="#101520" stroke="#00ff88" stroke-opacity="0.45"/>
+  <text x="886" y="132" fill="#00ff88" font-size="11" font-weight="bold">Tab 1: Live Monitor</text>
+  <text x="886" y="150" fill="#8c96a8" font-size="9">• Live WS Event Stream</text>
+  <text x="886" y="165" fill="#8c96a8" font-size="9">• YYYY-MM-DD HH:MM:SS.mmm</text>
+  <text x="886" y="180" fill="#8c96a8" font-size="9">• Context Pack (.md/.json)</text>
+  <text x="886" y="195" fill="#8c96a8" font-size="9">• Breaker &amp; Approval Gate</text>
+  <text x="886" y="210" fill="#8c96a8" font-size="9">• Token Flow &amp; FW Digest</text>
+
+  <rect x="874" y="246" width="192" height="120" rx="5" fill="#101520" stroke="#00e5ff" stroke-opacity="0.45"/>
+  <text x="886" y="266" fill="#00e5ff" font-size="11" font-weight="bold">Tab 2: Threat RAG &amp; KG</text>
+  <text x="886" y="284" fill="#8c96a8" font-size="9">• ColBERT MaxSim Search</text>
+  <text x="886" y="299" fill="#8c96a8" font-size="9">• Token Alignment Pills</text>
+  <text x="886" y="314" fill="#8c96a8" font-size="9">• 5-Stage Policy Ingestion</text>
+  <text x="886" y="329" fill="#8c96a8" font-size="9">• 3-Hop Exfiltration Chains</text>
+  <text x="886" y="344" fill="#8c96a8" font-size="9">• Local Model Routing Matrix</text>
+
+  <rect x="874" y="380" width="192" height="120" rx="5" fill="#101520" stroke="#b388ff" stroke-opacity="0.45"/>
+  <text x="886" y="400" fill="#b388ff" font-size="11" font-weight="bold">Tab 3: MCP &amp; Admin</text>
+  <text x="886" y="418" fill="#8c96a8" font-size="9">• 6 MCP Server Inspector</text>
+  <text x="886" y="433" fill="#8c96a8" font-size="9">• Interactive Tool Playground</text>
+  <text x="886" y="448" fill="#8c96a8" font-size="9">• Compliance Audit Runner</text>
+  <text x="886" y="463" fill="#8c96a8" font-size="9">• Persistent Budget Editor</text>
+  <text x="886" y="478" fill="#8c96a8" font-size="9">• 21 Firewall Ruleset Table</text>
+
+  <!-- BOTTOM ROW: Local Storage & Ollama Open-Weight Models -->
+  <line x1="430" y1="517" x2="430" y2="548" stroke="#00e5ff" stroke-width="2" marker-end="url(#arrowCyan)"/>
+  <line x1="680" y1="517" x2="680" y2="548" stroke="#ffaa00" stroke-width="2" marker-end="url(#arrowAmber)"/>
+
+  <rect x="20" y="550" width="520" height="110" rx="8" fill="#090c12" stroke="#00e5ff" stroke-opacity="0.45" stroke-width="1.5"/>
+  <text x="36" y="574" fill="#00e5ff" font-size="11" font-weight="bold">4. SQLITE PERSISTENCE (~/.agentguard/events.db · WAL Mode)</text>
+  <text x="36" y="596" fill="#dbe0ea" font-size="9.5">• <tspan fill="#00ff88">events</tspan> &amp; <tspan fill="#00ff88">sessions</tspan>: Full lifecycle telemetry, PIDs, tokens, cost, project cwd</text>
+  <text x="36" y="614" fill="#dbe0ea" font-size="9.5">• <tspan fill="#00e5ff">rag_chunks</tspan>: Semantic chunks, Anthropic prefixes, 64-d dense + 32-d ColBERT vectors</text>
+  <text x="36" y="632" fill="#dbe0ea" font-size="9.5">• <tspan fill="#b388ff">kg_nodes</tspan> &amp; <tspan fill="#b388ff">kg_edges</tspan>: MITRE ATLAS taxonomy + live session provenance graph</text>
+  <text x="36" y="650" fill="#dbe0ea" font-size="9.5">• <tspan fill="#ffaa00">approvals</tspan> &amp; <tspan fill="#ffaa00">kv</tspan>: Pending human-in-the-loop holds &amp; persistent session budgets</text>
+
+  <rect x="560" y="550" width="520" height="110" rx="8" fill="#090c12" stroke="#ffaa00" stroke-opacity="0.45" stroke-width="1.5"/>
+  <text x="576" y="574" fill="#ffaa00" font-size="11" font-weight="bold">5. LOCAL OPEN-WEIGHT MODELS (Ollama · 127.0.0.1:11434)</text>
+  <text x="576" y="596" fill="#dbe0ea" font-size="9.5">• <tspan fill="#00ff88" font-weight="bold">llama-guard3:1b</tspan> (Q4_K_M) — Tier-4 semantic hazard classification (S1–S15)</text>
+  <text x="576" y="614" fill="#dbe0ea" font-size="9.5">• <tspan fill="#00e5ff" font-weight="bold">qwen2.5:3b</tspan> (Q4_K_M) — Anthropic-style Contextual RAG prefix enrichment</text>
+  <text x="576" y="632" fill="#dbe0ea" font-size="9.5">• <tspan fill="#b388ff" font-weight="bold">deepseek-r1:1.5b</tspan> (Q4_K_M) — Chain-of-thought root-cause incident synthesis</text>
+  <text x="576" y="650" fill="#dbe0ea" font-size="9.5">• <tspan fill="#ffaa00" font-weight="bold">glm4:9b</tspan> (Q4_0) — GraphRAG entity &amp; tool-resource triple extraction</text>
+</svg>

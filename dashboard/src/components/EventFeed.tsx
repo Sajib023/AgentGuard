@@ -1,5 +1,7 @@
-import { useState, useMemo, type ReactNode } from "react";
+import { useState, useMemo, useEffect, useRef, type ReactNode } from "react";
+import { api } from "../api";
 import type { AgentEvent } from "../types";
+import Icon from "./Icon";
 
 const KIND_STYLE: Record<string, string> = {
   session_start: "ev-session",
@@ -44,13 +46,13 @@ function line(e: AgentEvent): { badge: string; body: ReactNode; cls: string } {
       return {
         ...base,
         badge: "PROMPT:IN",
-        body: <span className="text-muted">{(d.content || "").slice(0, 110) || d.preview || `${d.chars} chars`}</span>,
+        body: <span className="text-muted">{String(d.content || "").slice(0, 110) || d.preview || (d.chars != null ? `${d.chars} chars` : "Prompt content not recorded")}</span>,
       };
     case "prompt_after":
       return {
         ...base,
         badge: "PROMPT:OUT",
-        body: <span className="text-muted">{(d.content || "").slice(0, 110) || d.preview || `${d.chars} chars`}</span>,
+        body: <span className="text-muted">{String(d.content || "").slice(0, 110) || d.preview || (d.chars != null ? `${d.chars} chars` : "Response content not recorded")}</span>,
       };
     case "firewall_verdict":
       return {
@@ -83,7 +85,7 @@ function line(e: AgentEvent): { badge: string; body: ReactNode; cls: string } {
               <span className="dev-cost">${Number(d.cost_usd).toFixed(4)}</span>
             )}
             {d.latency_ms && <span className="dev-latency">{d.latency_ms}ms</span>}
-            {d.iteration !== undefined && <span className="dev-iter">iter #{d.iteration}</span>}
+            {d.iteration != null && <span className="dev-iter">iter #{d.iteration}</span>}
           </span>
         ),
       };
@@ -195,11 +197,15 @@ export default function EventFeed({
   connected,
   sessionFilter,
   onClear,
+  focusedEvent,
+  onFocusEvent,
 }: {
   events: AgentEvent[];
   connected: boolean;
   sessionFilter: string | null;
   onClear?: () => void;
+  focusedEvent?: string | null;
+  onFocusEvent?: (id: string | null) => void;
 }) {
   const [filterText, setFilterText] = useState("");
   const [activeCategory, setActiveCategory] = useState<"all" | "llm" | "tool" | "security" | "error">("all");
@@ -207,6 +213,25 @@ export default function EventFeed({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
   const [frozenEvents, setFrozenEvents] = useState<AgentEvent[]>([]);
+  const [actionError, setActionError] = useState("");
+  const rowsRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (focusedEvent) {
+      setExpandedId(focusedEvent);
+      setFilterText("");
+      setActiveCategory("all");
+      setIsPaused(false);
+      requestAnimationFrame(() => document.getElementById(`event-${focusedEvent}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }));
+    } else setExpandedId(null);
+  }, [focusedEvent]);
+
+  useEffect(() => { setExpandedId(null); setIsPaused(false); setFrozenEvents([]); }, [sessionFilter]);
+
+  const download = (format: "context-md" | "context-json" | "raw-json") => {
+    setActionError("");
+    void api.downloadSessionLog(sessionFilter, format).catch(() => setActionError("Export failed. Please try again."));
+  };
 
   const handleTogglePause = () => {
     if (!isPaused) {
@@ -250,20 +275,25 @@ export default function EventFeed({
 
     if (filterText.trim()) {
       const q = filterText.toLowerCase();
-      list = list.filter(
-        e =>
+      list = list.filter(e => {
+        const dObj = new Date(e.ts * 1000);
+        const dStr = `${dObj.getFullYear()}-${String(dObj.getMonth() + 1).padStart(2, "0")}-${String(dObj.getDate()).padStart(2, "0")}`;
+        return (
           e.agent.toLowerCase().includes(q) ||
           e.type.toLowerCase().includes(q) ||
           e.session_id.toLowerCase().includes(q) ||
+          dStr.includes(q) ||
           JSON.stringify(e.data).toLowerCase().includes(q)
-      );
+        );
+      });
     }
 
-    return list;
+    return [...list].sort((a, b) => b.ts - a.ts);
   }, [currentEvents, sessionFilter, activeCategory, filterText]);
 
   const toggleExpand = (id: string) => {
     setExpandedId(prev => (prev === id ? null : id));
+    if (expandedId === id) onFocusEvent?.(null);
   };
 
   const copyEventJson = (e: AgentEvent, ev: React.MouseEvent) => {
@@ -271,45 +301,34 @@ export default function EventFeed({
     navigator.clipboard.writeText(JSON.stringify(e, null, 2)).then(() => {
       setCopiedId(e.id);
       setTimeout(() => setCopiedId(null), 1800);
-    });
+    }).catch(() => setActionError("Couldn't copy the payload. Please try again."));
   };
 
   return (
-    <div className="feed">
+    <div className="feed" onKeyDown={e => { if (e.key === "Escape" && expandedId) { e.stopPropagation(); setExpandedId(null); onFocusEvent?.(null); } }}>
       {/* Stream Control Bar */}
       <div className="feed-head">
         <div className="feed-title-group">
-          <span className="feed-title">EVENT STREAM</span>
-          <span className="feed-count-badge">{filtered.length} ROWS</span>
+          <h2 className="feed-title">Event stream</h2>
+          <span className="feed-count-badge">{filtered.length} events</span>
           {sessionFilter && (
-            <span className="feed-filter-tag">
-              SESSION: {sessionFilter.slice(0, 10)}…
-            </span>
+            <span className="feed-filter-tag" title={sessionFilter}>Session {sessionFilter.slice(0, 10)}</span>
           )}
         </div>
 
         <div className="feed-actions">
+          <details className="export-menu" onKeyDown={e => { if (e.key === "Escape") { e.currentTarget.open = false; e.stopPropagation(); } }}><summary className="dev-btn"><Icon name="download" size={14} />Export</summary><div onClick={e => { const details = e.currentTarget.closest("details"); if (details) details.open = false; }}><button onClick={() => download("context-md")}>Context Markdown</button><button onClick={() => download("context-json")}>Context JSON</button><button onClick={() => download("raw-json")}>Raw events JSON</button>{onClear && <button onClick={onClear} title="Clear the in-memory view; stored events are kept">Clear view</button>}</div></details>
           <button
             type="button"
             className={`dev-btn mini ${isPaused ? "active-pause" : ""}`}
             onClick={handleTogglePause}
             title={isPaused ? "Resume live auto-updating" : "Pause live auto-updating"}
           >
-            {isPaused ? "▶ RESUME" : "⏸ PAUSE"}
+            <Icon name={isPaused ? "play" : "pause"} size={13} />{isPaused ? "Resume" : "Pause"}
           </button>
-          {onClear && (
-            <button
-              type="button"
-              className="dev-btn mini"
-              onClick={onClear}
-              title="Clear event history in view"
-            >
-              CLEAR
-            </button>
-          )}
           <div className="ws-indicator-pill">
             <span className={`ws-dot ${connected ? "on" : "off"}`} />
-            <span className="ws-text">{connected ? "LIVE" : "DISCONNECTED"}</span>
+            <span className="ws-text">{isPaused ? "Paused view" : connected ? "Live" : "Backfill"}</span>
           </div>
         </div>
       </div>
@@ -317,11 +336,12 @@ export default function EventFeed({
       {/* Filter / Search Bar */}
       <div className="feed-toolbar">
         <div className="feed-search-box">
-          <span className="search-icon">⌕</span>
+          <Icon name="search" size={16} />
           <input
             type="text"
             className="feed-search-input"
-            placeholder="grep events (filter text, model, rules, args)..."
+            placeholder="Search events, tools, rules…"
+            aria-label="Search events"
             value={filterText}
             onChange={e => setFilterText(e.target.value)}
           />
@@ -329,9 +349,10 @@ export default function EventFeed({
             <button
               type="button"
               className="clear-search-btn"
+              aria-label="Clear event search"
               onClick={() => setFilterText("")}
             >
-              ✕
+              <Icon name="close" size={13} />
             </button>
           )}
         </div>
@@ -344,29 +365,27 @@ export default function EventFeed({
               className={`feed-cat-btn ${activeCategory === cat ? "active" : ""}`}
               onClick={() => setActiveCategory(cat)}
             >
-              {cat.toUpperCase()}
+              {cat === "llm" ? "LLM" : cat[0].toUpperCase() + cat.slice(1)}
             </button>
           ))}
         </div>
       </div>
 
       {/* Rows Container */}
-      <div className="feed-rows">
+      {actionError && <div className="inline-error" role="status">{actionError}</div>}
+      <div className="event-column-head"><span>Time</span><span>Agent</span><span>Event</span><span>Evidence</span></div>
+      <div className="feed-rows" ref={rowsRef}>
         {filtered.length === 0 ? (
           <div className="empty-terminal-state">
-            <div className="terminal-ascii-header">
-              <span className="t-green">●</span> <span className="t-cyan">agentguard.stream</span>
-            </div>
-            <div className="terminal-prompt-line">
-              <span className="t-prompt">$</span> agentguard tail --follow
-            </div>
+            <Icon name="activity" size={28} />
+            <h3>{filterText || activeCategory !== "all" ? "No matching events" : "Waiting for agent activity"}</h3>
             <div className="terminal-output-line">
               {filterText || activeCategory !== "all"
-                ? "> No events match current filter criteria."
-                : "> Socket listening on /v1/ws. Awaiting agent lifecycle events..."}
+                ? "Try another search or event category."
+                : connected ? "Agent lifecycle events will appear here as they arrive." : "The live stream is disconnected. History will appear when the engine is available."}
             </div>
             <div className="terminal-hint">
-              Run any adapter or post to <code className="t-code">/v1/events</code> to stream telemetry.
+              {!filterText && activeCategory === "all" && <>Connect an agent integration to start monitoring.</>}
             </div>
           </div>
         ) : (
@@ -375,6 +394,7 @@ export default function EventFeed({
             const isExpanded = expandedId === e.id;
             const isCopied = copiedId === e.id;
             const dateObj = new Date(e.ts * 1000);
+            const dateStr = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, "0")}-${String(dateObj.getDate()).padStart(2, "0")}`;
             const timeStr = dateObj.toLocaleTimeString([], {
               hour12: false,
               hour: "2-digit",
@@ -386,30 +406,33 @@ export default function EventFeed({
             return (
               <div
                 key={e.id}
+                id={`event-${e.id}`}
                 className={`event-row-container ${isExpanded ? "expanded" : ""}`}
               >
-                <div
+                <button
+                  type="button"
                   className={`row ${cls}`}
                   onClick={() => toggleExpand(e.id)}
+                  aria-expanded={isExpanded}
                   title="Click to inspect raw JSON payload"
                 >
-                  <span className="ts" title={`ts: ${e.ts}`}>
-                    {timeStr}.<span className="ms">{millis}</span>
+                  <span className="ts" title={`${dateStr} ${timeStr}.${millis} (ts: ${e.ts})`}>
+                    <span className="date">{dateStr}</span> {timeStr}.<span className="ms">{millis}</span>
                   </span>
                   <span className="agent" title={`Agent: ${e.agent}`}>
                     {e.agent}
                   </span>
                   <span className="badge">{badge}</span>
                   <span className="body">{body}</span>
-                  <span className="row-expand-arrow">{isExpanded ? "▼" : "▶"}</span>
-                </div>
+                  <span className="row-expand-arrow"><Icon name={isExpanded ? "close" : "chevron"} size={12} /></span>
+                </button>
 
                 {/* Inspectable Raw JSON Drawer */}
                 {isExpanded && (
                   <div className="event-inspector-drawer">
                     <div className="inspector-bar">
                       <span className="inspector-title">
-                        PAYLOAD INSPECTOR · <span className="t-cyan">{e.id}</span>
+                        Event details · <span className="t-cyan">{e.id.slice(0, 12)}</span>
                       </span>
                       <div className="inspector-actions">
                         <button
@@ -417,10 +440,11 @@ export default function EventFeed({
                           className="dev-btn mini"
                           onClick={ev => copyEventJson(e, ev)}
                         >
-                          {isCopied ? "✓ COPIED" : "COPY JSON"}
+                          {isCopied ? "Copied" : "Copy JSON"}
                         </button>
                       </div>
                     </div>
+                    <div className="event-detail-summary"><strong>{badge} · {e.agent}</strong><span>{dateStr} {timeStr}.{millis}</span><span>Session <code>{e.session_id}</code></span>{e.parent_event_id && <span>Parent event <code>{e.parent_event_id}</code></span>}</div>
                     <pre className="inspector-json">
                       {JSON.stringify(e, null, 2)}
                     </pre>

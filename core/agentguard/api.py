@@ -12,8 +12,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -22,6 +22,8 @@ from .bus import EventBus
 from .config import Config, default_db_path
 from .db import Database
 from .firewall.engine import FirewallEngine
+from .mcp.server import MCPHub
+from .rag.service import ThreatRAGService
 from .schema import AgentKind, Event, EventIn, EventType, FirewallAction, new_event_from
 from .store import Store
 from .utils import now, sha256_text, truncate
@@ -35,12 +37,19 @@ class AppContext:
     bus: EventBus
     firewall: FirewallEngine
     breaker: CircuitBreaker
+    rag: ThreatRAGService
+    mcp: MCPHub
     approval_futures: dict[str, asyncio.Future] = field(default_factory=dict)
     start_ts: float = field(default_factory=now)
 
 
 class IngestBody(BaseModel):
     events: list[EventIn]
+
+
+class SessionBody(BaseModel):
+    pid: int | None = None
+    ppid: int | None = None
 
 
 class CheckBody(BaseModel):
@@ -68,14 +77,43 @@ class LimitsBody(BaseModel):
     limits: dict | None = None
 
 
+class RAGQueryBody(BaseModel):
+    query: str
+    top_k: int = 5
+    category: str | None = None
+    session_id: str | None = None
+    include_graph: bool = True
+
+
+class RAGIngestBody(BaseModel):
+    title: str
+    content: str
+    source: str = "custom_policy"
+    category: str = "policy"
+    severity: str = "high"
+    action: str = "block"
+    doc_id: str | None = None
+    metadata: dict | None = None
+
+
+class MCPCallBody(BaseModel):
+    name: str
+    arguments: dict | None = None
+
+
 def create_app(config: Config | None = None) -> FastAPI:
     cfg = config or Config.load()
     db = Database(cfg.server.db_path or default_db_path())
     store = Store(db)
     bus = EventBus()
-    fw = FirewallEngine(cfg.firewall)
+    rag = ThreatRAGService(db)
+    fw = FirewallEngine(cfg.firewall, rag=rag)
     breaker = CircuitBreaker(cfg.breaker, store, bus)
-    ctx = AppContext(config=cfg, db=db, store=store, bus=bus, firewall=fw, breaker=breaker)
+    mcp = MCPHub(store=store, firewall=fw, breaker=breaker, rag=rag)
+    ctx = AppContext(
+        config=cfg, db=db, store=store, bus=bus,
+        firewall=fw, breaker=breaker, rag=rag, mcp=mcp,
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -95,11 +133,13 @@ def create_app(config: Config | None = None) -> FastAPI:
             return AgentKind.generic
 
     async def record(event: Event) -> None:
-        """Insert + broadcast an event; the breaker consumes it for enforcement."""
+        """Insert + broadcast an event; the breaker and GraphRAG consume it."""
         store.insert(event)
+        rag.kg.observe_event(event)
         await bus.publish(event)
         for derived in breaker.observe_event(event):
             store.insert(derived)
+            rag.kg.observe_event(derived)
             await bus.publish(derived)
 
     async def ingest(event_in: EventIn) -> Event:
@@ -120,6 +160,8 @@ def create_app(config: Config | None = None) -> FastAPI:
             "sessions_tracked": len(breaker.sessions),
             "llm_guard": llm_status,
             "observe_mode": cfg.firewall.observe_mode,
+            "rag_chunks": rag.status()["contextual_chunks"],
+            "mcp_servers": len(mcp.status()["built_servers"]),
         }
 
     # -------------------------------------------------------------- events
@@ -150,6 +192,38 @@ def create_app(config: Config | None = None) -> FastAPI:
             return JSONResponse(status_code=404, content={"detail": "session not found"})
         return {"session": s, "breaker": breaker.status_for(session_id)}
 
+    @app.get("/v1/sessions/{session_id}/export")
+    async def session_export(session_id: str, format: str = "json", order: str = "desc"):
+        from fastapi.responses import Response
+        s = store.get_session(session_id)
+        events_list = [
+            e.model_dump(mode="json")
+            for e in store.get_events(session_id=session_id, limit=50000, order=order)
+        ]
+        safe_sid = "".join(c if c.isalnum() or c in ("-", "_") else "_" for c in session_id)[:48]
+        if format.lower() == "jsonl":
+            lines = [json.dumps(ev) for ev in events_list]
+            body = "\n".join(lines) + ("\n" if lines else "")
+            return Response(
+                content=body,
+                media_type="application/x-ndjson",
+                headers={"Content-Disposition": f'attachment; filename="agentguard-{safe_sid}.jsonl"'},
+            )
+        payload = {
+            "session_id": session_id,
+            "exported_at": now(),
+            "order": order,
+            "event_count": len(events_list),
+            "session": s,
+            "breaker": breaker.status_for(session_id),
+            "events": events_list,
+        }
+        return Response(
+            content=json.dumps(payload, indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="agentguard-{safe_sid}.json"'},
+        )
+
     @app.post("/v1/sessions/{session_id}/pid")
     async def set_pid(session_id: str, body: SessionBody):
         store.set_pid(session_id, body.pid, body.ppid)
@@ -158,9 +232,9 @@ def create_app(config: Config | None = None) -> FastAPI:
     # ------------------------------------------------------------ firewall
     @app.post("/v1/firewall/check")
     async def firewall_check(body: CheckBody):
-        result = await fw.inspect(body.text, direction=body.direction,
-                                  context_type=body.context_type)
         sid = body.session_id or "adhoc"
+        result = await fw.inspect(body.text, direction=body.direction,
+                                  context_type=body.context_type, session_id=sid)
         agent = agent_kind(body.agent)
         store_content = cfg.firewall.store_prompt_content
 
@@ -323,11 +397,88 @@ def create_app(config: Config | None = None) -> FastAPI:
                            data={"state": f"firewall_mode:{mode}"}))
         return {"mode": mode}
 
+    # ---------------------------------------------- Threat-RAG & GraphRAG
+    @app.get("/v1/rag/status")
+    async def rag_status():
+        return rag.status()
+
+    @app.post("/v1/rag/query")
+    async def rag_query(body: RAGQueryBody):
+        return rag.retrieve(
+            body.query,
+            top_k=body.top_k,
+            category=body.category,
+            session_id=body.session_id,
+            include_graph=body.include_graph,
+        )
+
+    @app.post("/v1/rag/ingest")
+    async def rag_ingest(body: RAGIngestBody):
+        return rag.ingest_document(
+            title=body.title,
+            content=body.content,
+            source=body.source,
+            category=body.category,
+            severity=body.severity,
+            action=body.action,
+            doc_id=body.doc_id,
+            metadata=body.metadata,
+        )
+
+    @app.get("/v1/graph/lineage")
+    async def graph_lineage(
+        query: str | None = None,
+        session_id: str | None = None,
+        max_hops: int = 3,
+    ):
+        return rag.kg.query_subgraph(
+            query=query or "",
+            session_id=session_id,
+            max_hops=max_hops,
+        )
+
+    # ---------------------------------------- MCP (Built + External + SSE)
+    @app.get("/v1/mcp/status")
+    async def mcp_status():
+        return mcp.status()
+
+    @app.post("/v1/mcp/call")
+    async def mcp_call(body: MCPCallBody):
+        try:
+            out = await mcp.call_tool(body.name, body.arguments or {})
+            return {"ok": True, "tool": body.name, "result": out}
+        except ValueError as exc:
+            return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.post("/v1/mcp/rpc")
+    async def mcp_rpc(request: Request, server: str | None = None):
+        payload = await request.json()
+        resp = await mcp.handle_jsonrpc(payload, server_id=server)
+        return resp
+
+    @app.get("/v1/mcp/sse")
+    async def mcp_sse(server: str | None = None):
+        server_id = server or "agentguard-lineage-mcp"
+
+        async def event_stream():
+            rpc_url = f"/v1/mcp/rpc?server={server_id}"
+            yield f"event: endpoint\ndata: {rpc_url}\n\n"
+            status_payload = json.dumps({
+                "server": server_id,
+                "protocol": "2024-11-05",
+                "transport": "sse",
+                "status": "ready",
+            })
+            yield f"event: ready\ndata: {status_payload}\n\n"
+
+        return StreamingResponse(event_stream(), media_type="text/event-stream")
+
     # ------------------------------------------------------ websocket feed
     @app.websocket("/v1/ws")
     async def ws_feed(ws: WebSocket):
         await ws.accept()
         types_q = ws.query_params.get("types")
+        sid_q = ws.query_params.get("session_id")
         replay = int(ws.query_params.get("replay", "0") or 0)
         ts = set(types_q.split(",")) if types_q else None
         sub_id, queue = await bus.subscribe(types=ts)
@@ -375,7 +526,7 @@ def create_app(config: Config | None = None) -> FastAPI:
 
         try:
             if replay:
-                for ev in reversed(store.get_events(limit=replay, order="desc")):
+                for ev in reversed(store.get_events(session_id=sid_q, limit=replay, order="desc")):
                     if ts and ev.type.value not in ts:
                         continue
                     await ws.send_text(json.dumps({"kind": "event",
@@ -392,8 +543,14 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     # ------------------------------------ dashboard static (built React app)
     root = Path(__file__).resolve().parents[2]
-    dist_dir = (Path(cfg.dashboard.dir) if cfg.dashboard.dir
-                else root / "dashboard" / "dist").expanduser()
+    env_dist = os.environ.get("AGENTGUARD_DASHBOARD_DIR", "")
+    candidates = [
+        Path(cfg.dashboard.dir).expanduser() if cfg.dashboard.dir else None,
+        Path(env_dist).expanduser() if env_dist else None,
+        root / "dashboard" / "dist",
+        (Path(os.environ.get("AGENTGUARD_HOME") or (Path.home() / ".agentguard")) / "app" / "dashboard" / "dist").expanduser(),
+    ]
+    dist_dir = next((c for c in candidates if c and c.is_dir()), root / "dashboard" / "dist")
     if dist_dir.is_dir():
         app.mount("/assets", StaticFiles(directory=dist_dir / "assets"), name="assets")
 
@@ -403,6 +560,8 @@ def create_app(config: Config | None = None) -> FastAPI:
 
         @app.get("/{full_path:path}", include_in_schema=False)
         async def spa_fallback(full_path: str):
+            if full_path.startswith("v1/"):
+                return JSONResponse(status_code=404, content={"detail": "not found"})
             candidate = (dist_dir / full_path).resolve()
             if candidate.is_file() and str(candidate).startswith(str(dist_dir.resolve())):
                 return FileResponse(candidate)

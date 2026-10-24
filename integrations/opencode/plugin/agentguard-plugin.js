@@ -101,12 +101,18 @@ async function ensureSession(client, ctx, sid, hints = {}) {
         // the session's own directory beats the plugin process cwd (shared
         // services host many projects: without this, every session on the
         // dashboard "lives" in the service's startup dir)
-        if (!hints.directory && info.directory) hints.directory = info.directory;
+        if (!hints.directory && (info.directory || info.cwd)) {
+          hints.directory = info.directory || info.cwd;
+        }
       }
     } catch { void 0; }
   }
-  const cwd = hints.directory || ctx?.directory || process.cwd?.();
-  void client.sendEvent(sid, "session_start", { model: model || undefined, cwd });
+  const cwd =
+    hints.directory ||
+    ctx?.location?.directory ||
+    ctx?.directory ||
+    process.cwd?.();
+  await client.sendEvent(sid, "session_start", { model: model || undefined, cwd });
   void client.reportPid(sid);
 }
 

@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 320" width="100%" height="auto" font-family="'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace">
+  <defs>
+    <linearGradient id="bgGrad4" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#050608"/>
+      <stop offset="100%" stop-color="#0a0e14"/>
+    </linearGradient>
+    <marker id="arrF" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 1 L 10 5 L 0 9 z" fill="#00e5ff"/>
+    </marker>
+  </defs>
+
+  <rect width="1100" height="320" rx="10" fill="url(#bgGrad4)" stroke="#1e2633" stroke-width="2"/>
+
+  <rect x="20" y="16" width="1060" height="36" rx="6" fill="#0d1117" stroke="#ff3355" stroke-opacity="0.45"/>
+  <text x="38" y="39" fill="#f3f5f8" font-size="13" font-weight="bold" letter-spacing="0.8">5-TIER PROMPT &amp; TOOL FIREWALL INSPECTION PIPELINE (FirewallEngine.inspect)</text>
+
+  <!-- Tier 1 -->
+  <rect x="20" y="68" width="160" height="136" rx="6" fill="#0b0f17" stroke="#2b3548" stroke-width="1.5"/>
+  <text x="32" y="90" fill="#00e5ff" font-size="10.5" font-weight="bold">TIER 1: REGEX</text>
+  <text x="32" y="108" fill="#f3f5f8" font-size="9">rules.py (21 rules)</text>
+  <text x="32" y="126" fill="#8c96a8" font-size="8.5">• System overrides</text>
+  <text x="32" y="142" fill="#8c96a8" font-size="8.5">• DAN / Jailbreaks</text>
+  <text x="32" y="158" fill="#8c96a8" font-size="8.5">• rm -rf / mkfs / dd</text>
+  <text x="32" y="174" fill="#8c96a8" font-size="8.5">• curl | sh &amp; SQL drop</text>
+  <text x="32" y="190" fill="#00ff88" font-size="8.5">&lt; 1ms deterministic</text>
+
+  <line x1="180" y1="136" x2="196" y2="136" stroke="#00e5ff" stroke-width="2" marker-end="url(#arrF)"/>
+
+  <!-- Tier 2 -->
+  <rect x="198" y="68" width="168" height="136" rx="6" fill="#0b0f17" stroke="#2b3548" stroke-width="1.5"/>
+  <text x="210" y="90" fill="#00e5ff" font-size="10.5" font-weight="bold">TIER 2: HEURISTICS</text>
+  <text x="210" y="108" fill="#f3f5f8" font-size="9">heuristics.py</text>
+  <text x="210" y="126" fill="#8c96a8" font-size="8.5">• Base64 decode +</text>
+  <text x="210" y="140" fill="#ffaa00" font-size="8.5">  recursive Tier-1 scan</text>
+  <text x="210" y="156" fill="#8c96a8" font-size="8.5">• Unicode homoglyphs</text>
+  <text x="210" y="172" fill="#8c96a8" font-size="8.5">• Imperative density</text>
+  <text x="210" y="188" fill="#8c96a8" font-size="8.5">• Paraphrase phrase net</text>
+
+  <line x1="366" y1="136" x2="382" y2="136" stroke="#00e5ff" stroke-width="2" marker-end="url(#arrF)"/>
+
+  <!-- Tier 3 -->
+  <rect x="384" y="68" width="164" height="136" rx="6" fill="#0b0f17" stroke="#ffaa00" stroke-opacity="0.55" stroke-width="1.5"/>
+  <text x="396" y="90" fill="#ffaa00" font-size="10.5" font-weight="bold">TIER 3: SECRETS</text>
+  <text x="396" y="108" fill="#f3f5f8" font-size="9">secrets.py</text>
+  <text x="396" y="126" fill="#8c96a8" font-size="8.5">• AWS / GCP / Azure</text>
+  <text x="396" y="142" fill="#8c96a8" font-size="8.5">• OpenAI / Anthropic</text>
+  <text x="396" y="158" fill="#8c96a8" font-size="8.5">• GitHub PAT / Slack</text>
+  <text x="396" y="174" fill="#8c96a8" font-size="8.5">• SSH / PEM PrivKeys</text>
+  <text x="396" y="190" fill="#ffaa00" font-size="8.5">Rewrites [REDACTED:*]</text>
+
+  <line x1="548" y1="136" x2="564" y2="136" stroke="#00e5ff" stroke-width="2" marker-end="url(#arrF)"/>
+
+  <!-- Tier 3.5 -->
+  <rect x="566" y="68" width="176" height="136" rx="6" fill="#0b0f17" stroke="#00e5ff" stroke-opacity="0.65" stroke-width="1.5"/>
+  <text x="578" y="90" fill="#00e5ff" font-size="10.5" font-weight="bold">TIER 3.5: RAG + KG</text>
+  <text x="578" y="108" fill="#f3f5f8" font-size="9">ThreatRAG + GraphRAG</text>
+  <text x="578" y="126" fill="#8c96a8" font-size="8.5">• Contextual RAG match</text>
+  <text x="578" y="142" fill="#8c96a8" font-size="8.5">• ColBERT MaxSim score</text>
+  <text x="578" y="158" fill="#8c96a8" font-size="8.5">• Updates session KG</text>
+  <text x="578" y="174" fill="#ff3355" font-size="8.5">• 3-hop AML.T0048</text>
+  <text x="578" y="190" fill="#ff3355" font-size="8.5">  exfiltration block</text>
+
+  <line x1="742" y1="136" x2="758" y2="136" stroke="#00e5ff" stroke-width="2" marker-end="url(#arrF)"/>
+
+  <!-- Tier 4 -->
+  <rect x="760" y="68" width="156" height="136" rx="6" fill="#0b0f17" stroke="#00ff88" stroke-opacity="0.55" stroke-width="1.5"/>
+  <text x="772" y="90" fill="#00ff88" font-size="10.5" font-weight="bold">TIER 4: LLAMA GUARD</text>
+  <text x="772" y="108" fill="#f3f5f8" font-size="9">llama-guard3:1b</text>
+  <text x="772" y="126" fill="#8c96a8" font-size="8.5">• Local Ollama HTTP</text>
+  <text x="772" y="142" fill="#8c96a8" font-size="8.5">• MLCommons S1–S15</text>
+  <text x="772" y="158" fill="#8c96a8" font-size="8.5">• S3/S4/S9/S13-15: block</text>
+  <text x="772" y="174" fill="#8c96a8" font-size="8.5">• Weighted ×50 cap</text>
+  <text x="772" y="190" fill="#00ff88" font-size="8.5">• Fail-open fallback</text>
+
+  <line x1="916" y1="136" x2="932" y2="136" stroke="#00e5ff" stroke-width="2" marker-end="url(#arrF)"/>
+
+  <!-- Tier 5 -->
+  <rect x="934" y="68" width="146" height="136" rx="6" fill="#121622" stroke="#b388ff" stroke-width="1.5"/>
+  <text x="946" y="90" fill="#b388ff" font-size="10.5" font-weight="bold">TIER 5: VERDICT</text>
+  <text x="946" y="112" fill="#00ff88" font-size="9.5" font-weight="bold">✓ ALLOW</text>
+  <text x="946" y="132" fill="#ffaa00" font-size="9.5" font-weight="bold">✎ SANITIZE</text>
+  <text x="946" y="152" fill="#b388ff" font-size="9.5" font-weight="bold">⏸ APPROVE (Hold)</text>
+  <text x="946" y="172" fill="#ff3355" font-size="9.5" font-weight="bold">✕ BLOCK</text>
+  <text x="946" y="192" fill="#8c96a8" font-size="8.2">Cap per-kind score</text>
+
+  <!-- Bottom Policy Bar -->
+  <rect x="20" y="220" width="1060" height="82" rx="6" fill="#0b0f17" stroke="#1e2633"/>
+  <text x="36" y="242" fill="#00e5ff" font-size="10" font-weight="bold">POLICY VOTING &amp; RISK SCORING FORMULA:</text>
+  <text x="36" y="262" fill="#dbe0ea" font-size="9.2">1. Category Vote: Each triggered kind maps to its configured action (`injection → block`, `exfiltration → block`, `destructive → approve`, `secret → sanitize`).</text>
+  <text x="36" y="280" fill="#dbe0ea" font-size="9.2">2. Per-Kind Score Cap: `kind_score[k] = max(v.weight * v.confidence for v in violations[k])` prevents overlapping matches of one rule class from escalating past policy.</text>
+</svg>

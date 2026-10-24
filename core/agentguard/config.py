@@ -61,6 +61,7 @@ class FirewallConfig(BaseModel):
             "injection": "block",
             "jailbreak": "block",
             "override": "block",
+            "exfiltration": "block",
             "encoded_payload": "sanitize",
             "secret": "sanitize",
             "unsafe_content": "block",
