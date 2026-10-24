@@ -87,15 +87,20 @@ Nothing leaves your machine except the model calls your coding agents already ma
 
 ## Quickstart
 
-### Option A — One-Command Setup (Recommended)
-
-Installs AgentGuard core, builds/mounts the dashboard, links `~/.local/bin/agentguard`, auto-wires **OpenCode**, **Claude Code**, and **Codex CLI** hooks, and starts the background daemon on `:8907`:
+### Option A — One-Command Hardware-Verified Setup (Recommended)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Sajib023/AgentGuard/main/install.sh | bash
 ```
 
 *(Or from a local checkout: `./install.sh`)*
+
+The installer executes a strict **5-step hardware-verified flow**:
+1. **Hardware Compatibility Check (Pre-Flight):** Automatically inspects **CPU** (architecture, core count, 64-bit SIMD extensions), **RAM** (total and available memory), and **Free Storage** against the target AI model's requirements (`llama-guard3:1b` by default, or pass `--model <name>`). If any requirement fails, it displays the detected vs. required values and exits gracefully without downloading anything.
+2. **Explicit User Permission:** Displays the planned actions and asks for explicit confirmation (`[y/N]`) before downloading large files or making system changes.
+3. **Ollama & AI Model Installation:** Downloads and installs **Ollama** (if not already present) and pulls the required AI model (`llama-guard3:1b`).
+4. **AgentGuard & Auto-Boot Configuration:** Installs AgentGuard (`~/.agentguard`), configures `agentguard.yaml` and coding agent hooks (**OpenCode**, **Claude Code**, **Codex CLI**), and configures **Ollama** + **AgentGuard** (`systemd` service / `@reboot` fallback) to **start automatically whenever the device boots**.
+5. **End-to-End Verification:** Verifies Ollama registry, runs a live model inference warmup (`keep_alive=24h`), and verifies `http://127.0.0.1:8907/v1/healthz` (`llm_guard: reachable`).
 
 ### Option B — Manual / Step-by-Step Setup
 
@@ -104,8 +109,9 @@ curl -fsSL https://raw.githubusercontent.com/Sajib023/AgentGuard/main/install.sh
 python3 -m venv .venv
 .venv/bin/pip install -e ./core
 
-# 2. Auto-wire OpenCode, Claude Code, and Codex CLI hooks + start background daemon
-.venv/bin/agentguard setup --start
+# 2. Check hardware compatibility & auto-wire OpenCode, Claude Code, and Codex CLI hooks
+.venv/bin/agentguard hwcheck --model llama-guard3:1b
+.venv/bin/agentguard setup --pull-model --start
 
 # 3. Verify health, daemon status & environment (deps, SQLite path, local Ollama models)
 .venv/bin/agentguard status

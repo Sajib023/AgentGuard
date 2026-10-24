@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agentguard.cli import _repo_root, _setup_claude, _setup_codex, _setup_opencode
+from agentguard.cli import _repo_root, _setup_claude, _setup_codex, _setup_opencode, check_hardware
 
 
 def test_setup_integrations_idempotent_merge(tmp_path: Path, monkeypatch):
@@ -66,3 +66,25 @@ def test_setup_integrations_idempotent_merge(tmp_path: Path, monkeypatch):
     codex_hooks = json.loads((codex_dir / "hooks.json").read_text(encoding="utf-8"))
     assert len(codex_hooks["hooks"]["PreToolUse"]) == 2
     assert len(codex_hooks["hooks"]["SessionStart"]) == 1
+
+
+def test_check_hardware_pass_and_fail(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("AGENTGUARD_MIN_RAM_MB", "128")
+    monkeypatch.setenv("AGENTGUARD_MIN_AVAIL_RAM_MB", "64")
+    monkeypatch.setenv("AGENTGUARD_MIN_DISK_MB", "64")
+    monkeypatch.setenv("AGENTGUARD_MIN_CPU_CORES", "1")
+    ok_res = check_hardware("llama-guard3:1b", target_dir=str(tmp_path))
+    assert ok_res["compatible"] is True
+    assert ok_res["cpu"]["pass"] is True
+    assert ok_res["ram"]["pass"] is True
+    assert ok_res["storage"]["pass"] is True
+
+    monkeypatch.setenv("AGENTGUARD_MIN_RAM_MB", "9999999")
+    monkeypatch.setenv("AGENTGUARD_MIN_DISK_MB", "9999999")
+    monkeypatch.setenv("AGENTGUARD_MIN_CPU_CORES", "512")
+    fail_res = check_hardware("llama-guard3:1b", target_dir=str(tmp_path))
+    assert fail_res["compatible"] is False
+    assert fail_res["cpu"]["pass"] is False
+    assert fail_res["ram"]["pass"] is False
+    assert fail_res["storage"]["pass"] is False
+

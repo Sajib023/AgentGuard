@@ -369,6 +369,146 @@ def cmd_setup(args: argparse.Namespace) -> int:
     return 0
 
 
+def check_hardware(model: str = "llama-guard3:1b", target_dir: str | None = None) -> dict:
+    """Detect RAM, disk space, and CPU features and evaluate compatibility for `model`."""
+    import platform
+
+    # Model-tier defaults (in MB / cores), overridable via env vars
+    low = model.lower()
+    if any(tag in low for tag in (":7b", ":8b", ":9b", ":13b", ":14b")):
+        default_ram_mb, default_avail_mb, default_disk_mb, default_cores = 7680, 4096, 10240, 4
+    elif any(tag in low for tag in (":3b", ":4b")):
+        default_ram_mb, default_avail_mb, default_disk_mb, default_cores = 5632, 2048, 7168, 2
+    else:
+        # 1b / 1.5b class (e.g. llama-guard3:1b)
+        default_ram_mb, default_avail_mb, default_disk_mb, default_cores = 3584, 1024, 5120, 2
+
+    min_ram_mb = int(os.environ.get("AGENTGUARD_MIN_RAM_MB", str(default_ram_mb)))
+    min_avail_mb = int(os.environ.get("AGENTGUARD_MIN_AVAIL_RAM_MB", str(default_avail_mb)))
+    min_disk_mb = int(os.environ.get("AGENTGUARD_MIN_DISK_MB", str(default_disk_mb)))
+    min_cores = int(os.environ.get("AGENTGUARD_MIN_CPU_CORES", str(default_cores)))
+
+    # 1. CPU check
+    arch = platform.machine().lower()
+    supported_archs = {"x86_64", "amd64", "aarch64", "arm64"}
+    arch_ok = arch in supported_archs
+    cores = os.cpu_count() or 1
+    cores_ok = cores >= min_cores
+    cpu_model = platform.processor() or arch or "Unknown CPU"
+    flags: set[str] = set()
+    if Path("/proc/cpuinfo").is_file():
+        with contextlib.suppress(Exception):
+            for line in Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="ignore").splitlines():
+                if line.lower().startswith("model name") and ":" in line:
+                    cpu_model = line.split(":", 1)[1].strip()
+                elif line.lower().startswith(("flags", "features")) and ":" in line:
+                    flags.update(line.split(":", 1)[1].strip().lower().split())
+    elif sys.platform == "darwin":
+        with contextlib.suppress(Exception):
+            out = subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"], text=True).strip()
+            if out:
+                cpu_model = out
+
+    simd_list: list[str] = []
+    if arch in ("x86_64", "amd64"):
+        for feat in ("avx512f", "avx2", "avx", "sse4_2", "sse4_1"):
+            if feat in flags:
+                simd_list.append(feat.upper().replace("_", "."))
+        simd_ok = bool(simd_list) or not flags  # pass if SIMD detected or flags unavailable in VM
+    elif arch in ("aarch64", "arm64"):
+        simd_list.append("NEON/ASIMD")
+        simd_ok = True
+    else:
+        simd_ok = False
+    cpu_ok = arch_ok and cores_ok and simd_ok
+
+    # 2. RAM check
+    total_ram_mb = 0
+    avail_ram_mb = 0
+    if Path("/proc/meminfo").is_file():
+        mem: dict[str, int] = {}
+        with contextlib.suppress(Exception):
+            for line in Path("/proc/meminfo").read_text(encoding="utf-8", errors="ignore").splitlines():
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    mem[k.strip()] = int(v.strip().split()[0]) // 1024
+        total_ram_mb = mem.get("MemTotal", 0)
+        avail_ram_mb = mem.get("MemAvailable", mem.get("MemFree", 0))
+    elif sys.platform == "darwin":
+        with contextlib.suppress(Exception):
+            mem_bytes = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True).strip())
+            total_ram_mb = mem_bytes // (1024 * 1024)
+            avail_ram_mb = total_ram_mb // 2
+    ram_ok = total_ram_mb >= min_ram_mb and avail_ram_mb >= min_avail_mb
+
+    # 3. Storage check
+    check_path = Path(target_dir or Path.home()).expanduser()
+    while not check_path.exists() and check_path.parent != check_path:
+        check_path = check_path.parent
+    usage = shutil.disk_usage(check_path)
+    free_disk_mb = usage.free // (1024 * 1024)
+    total_disk_mb = usage.total // (1024 * 1024)
+    disk_ok = free_disk_mb >= min_disk_mb
+
+    return {
+        "model": model,
+        "compatible": bool(cpu_ok and ram_ok and disk_ok),
+        "cpu": {
+            "pass": cpu_ok,
+            "model": cpu_model,
+            "arch": arch,
+            "cores": cores,
+            "min_cores": min_cores,
+            "simd": simd_list or ["64-bit standard"],
+        },
+        "ram": {
+            "pass": ram_ok,
+            "total_mb": total_ram_mb,
+            "avail_mb": avail_ram_mb,
+            "min_total_mb": min_ram_mb,
+            "min_avail_mb": min_avail_mb,
+        },
+        "storage": {
+            "pass": disk_ok,
+            "path": str(check_path),
+            "free_mb": free_disk_mb,
+            "total_mb": total_disk_mb,
+            "min_free_mb": min_disk_mb,
+        },
+    }
+
+
+def cmd_hwcheck(args: argparse.Namespace) -> int:
+    model = getattr(args, "model", None) or os.environ.get("AGENTGUARD_MODEL") or "llama-guard3:1b"
+    res = check_hardware(model=model)
+    if getattr(args, "json", False):
+        print(json.dumps(res, indent=2))
+        return 0 if res["compatible"] else 1
+
+    c, r, s = res["cpu"], res["ram"], res["storage"]
+    print(f"Hardware Compatibility Check (Target AI Model: {res['model']})")
+    print(
+        f"  CPU:     {'[PASS]' if c['pass'] else '[FAIL]'} "
+        f"{c['model']} ({c['arch']}, {c['cores']} cores, {', '.join(c['simd'])}) "
+        f"| Required: x86_64/arm64, >= {c['min_cores']} cores"
+    )
+    print(
+        f"  RAM:     {'[PASS]' if r['pass'] else '[FAIL]'} "
+        f"{r['total_mb'] / 1024:.1f} GB total, {r['avail_mb'] / 1024:.1f} GB available "
+        f"| Required: >= {r['min_total_mb'] / 1024:.1f} GB total, >= {r['min_avail_mb'] / 1024:.1f} GB available"
+    )
+    print(
+        f"  Storage: {'[PASS]' if s['pass'] else '[FAIL]'} "
+        f"{s['free_mb'] / 1024:.1f} GB free on {s['path']} "
+        f"| Required: >= {s['min_free_mb'] / 1024:.1f} GB free"
+    )
+    if res["compatible"]:
+        print("Result: COMPATIBLE — All hardware checks passed.")
+        return 0
+    print("Result: INCOMPATIBLE — One or more hardware requirements failed.")
+    return 1
+
+
 def cmd_doctor(_: argparse.Namespace) -> int:
     from .config import Config, default_db_path
 
@@ -376,6 +516,12 @@ def cmd_doctor(_: argparse.Namespace) -> int:
     print("AgentGuard doctor")
     print(f"  python:      {sys.version.split()[0]}")
     print(f"  db path:     {cfg.server.db_path or default_db_path()}")
+    hw = check_hardware(cfg.firewall.llm_guard.model)
+    print(
+        f"  hardware:    {'COMPATIBLE' if hw['compatible'] else 'INCOMPATIBLE'} "
+        f"({hw['cpu']['cores']} cores, {hw['ram']['total_mb'] / 1024:.1f} GB RAM, "
+        f"{hw['storage']['free_mb'] / 1024:.1f} GB free disk)"
+    )
     for mod in ("fastapi", "uvicorn", "httpx", "yaml", "pydantic"):
         try:
             __import__(mod)
@@ -442,6 +588,10 @@ def main() -> None:
     status_p = sub.add_parser("status", help="check running AgentGuard daemon status and health")
     status_p.add_argument("--config", help="YAML config path")
 
+    hw_p = sub.add_parser("hwcheck", help="verify hardware compatibility (RAM, disk, CPU) for local AI models")
+    hw_p.add_argument("--model", default="llama-guard3:1b", help="target AI model name (default: llama-guard3:1b)")
+    hw_p.add_argument("--json", action="store_true", help="output JSON result")
+
     mcp_p = sub.add_parser("mcp", help="run an AgentGuard MCP server over stdio")
     mcp_p.add_argument(
         "--server",
@@ -460,6 +610,8 @@ def main() -> None:
         sys.exit(cmd_setup(args))
     if args.cmd == "status":
         sys.exit(cmd_status(args))
+    if args.cmd == "hwcheck":
+        sys.exit(cmd_hwcheck(args))
     if args.cmd == "mcp":
         sys.exit(cmd_mcp(args))
     if args.cmd == "stop":
@@ -476,4 +628,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
