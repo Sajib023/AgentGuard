@@ -5,8 +5,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/Sajib023/AgentGuard/main/install.sh | bash
 #
 # Usage (with options):
-#   curl -fsSL https://raw.githubusercontent.com/Sajib023/AgentGuard/main/install.sh | bash -s -- [--model llama-guard3:1b] [--yes]
-#   ./install.sh [--model llama-guard3:1b] [--yes] [--no-start]
+#   curl -fsSL https://raw.githubusercontent.com/Sajib023/AgentGuard/main/install.sh | bash -s -- [--model llama-guard3:1b] [--lightweight] [--yes]
+#   ./install.sh [--model llama-guard3:1b] [--lightweight] [--yes] [--no-start]
 #
 # Environment overrides:
 #   AGENTGUARD_HOME            Base runtime dir (default: ~/.agentguard)
@@ -30,12 +30,17 @@ BIN_DIR="${HOME}/.local/bin"
 START_DAEMON=1
 ASSUME_YES="${AGENTGUARD_ASSUME_YES:-0}"
 HW_CHECK_ONLY=0
+LIGHTWEIGHT_MODE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --model)
       AGENTGUARD_MODEL="${2:?--model requires a model name}"
       shift 2
+      ;;
+    --lightweight)
+      LIGHTWEIGHT_MODE=1
+      shift
       ;;
     -y|--yes)
       ASSUME_YES=1
@@ -50,7 +55,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      echo "Usage: install.sh [--model MODEL] [-y|--yes] [--no-start] [--hwcheck-only]"
+      echo "Usage: install.sh [--model MODEL] [--lightweight] [-y|--yes] [--no-start] [--hwcheck-only]"
       exit 0
       ;;
     *)
@@ -72,6 +77,21 @@ ok()      { printf "${green}[agentguard] ✓${reset} %s\n" "$*"; }
 warn()    { printf "${yellow}[agentguard] !${reset} %s\n" "$*"; }
 fail()    { printf "${red}[agentguard] ✗ %s${reset}\n" "$*" >&2; exit 1; }
 section() { printf "\n${bold}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}\n  ${bold}%s${reset}\n${bold}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${reset}\n" "$*"; }
+
+prompt_user() {
+  local prompt_msg="$1"
+  local reply=""
+  if [[ -t 0 ]]; then
+    read -r -p "$prompt_msg" reply || true
+  elif [[ -e /dev/tty ]] && ( exec </dev/tty ) 2>/dev/null; then
+    read -r -p "$prompt_msg" reply < /dev/tty || true
+  else
+    warn "No interactive terminal (/dev/tty) detected for permission prompt." >&2
+    warn "Re-run in an interactive terminal or pass '--yes' (or AGENTGUARD_ASSUME_YES=1) to grant permission explicitly." >&2
+    return 2
+  fi
+  printf "%s" "$reply"
+}
 
 printf "\n${bold}⚡ AgentGuard Setup & Hardware-Verified Local AI Installer${reset}\n"
 printf "   Local-First Runtime Firewall · Threat-RAG & GraphRAG · Circuit Breaker · MCP Hub\n"
@@ -250,12 +270,11 @@ if not disk_ok:
     )
 
 if failures:
-    print(f"  {RED}{BOLD}✗ COMPATIBILITY RESULT: FAILED ({len(failures)} requirement(s) not met){RESET}")
+    print(f"  {RED}{BOLD}✗ COMPATIBILITY RESULT: FAILED FOR AI MODEL '{model}' ({len(failures)} requirement(s) not met){RESET}")
     for name, detail in failures:
         print(f"    • {BOLD}{name}:{RESET} {detail}")
     print()
-    print(f"  {BOLD}Action Taken:{RESET} Ollama and model '{model}' were NOT downloaded or installed.")
-    print("  Exiting installation gracefully.")
+    print(f"  {BOLD}Policy:{RESET} Ollama and AI model '{model}' will NOT be downloaded or installed.")
     sys.exit(2)
 
 print(f"  {GREEN}{BOLD}✓ COMPATIBILITY RESULT: PASSED — Device meets all requirements for {model}.{RESET}")
@@ -264,95 +283,114 @@ PY
 HW_RC=$?
 set -e
 
-if [[ "$HW_RC" -ne 0 ]]; then
-  exit 1
-fi
-
 if [[ "$HW_CHECK_ONLY" == "1" ]]; then
-  exit 0
-fi
-
-# ==============================================================================
-# EXPLICIT USER PERMISSION PROMPT (Before any download or system modification)
-# ==============================================================================
-printf "\n${bold}Planned Installation & System Actions:${reset}\n"
-printf "  1. Download and install ${bold}Ollama${reset} (if not already installed)\n"
-printf "  2. Download AI model ${bold}%s${reset} via Ollama\n" "$AGENTGUARD_MODEL"
-printf "  3. Install & configure ${bold}AgentGuard${reset} in %s (+ OpenCode, Claude Code, Codex hooks)\n" "$AGENTGUARD_HOME"
-printf "  4. Configure ${bold}Ollama${reset} and ${bold}AgentGuard${reset} to start automatically on device boot\n"
-printf "  5. Verify Ollama, model inference, and AgentGuard firewall readiness\n\n"
-
-if [[ "$ASSUME_YES" != "1" ]]; then
-  REPLY=""
-  if [[ -t 0 ]]; then
-    read -r -p "Do you grant permission to proceed with downloading and installing these components? [y/N]: " REPLY || true
-  elif [[ -e /dev/tty ]] && ( exec </dev/tty ) 2>/dev/null; then
-    read -r -p "Do you grant permission to proceed with downloading and installing these components? [y/N]: " REPLY < /dev/tty || true
+  if [[ "$HW_RC" -eq 0 ]]; then
+    exit 0
   else
-    warn "No interactive terminal (/dev/tty) detected for permission prompt."
-    warn "Re-run in an interactive terminal or pass '--yes' (or AGENTGUARD_ASSUME_YES=1) to grant permission explicitly."
     exit 1
   fi
+fi
 
-  case "$REPLY" in
-    [yY]|[yY][eE][sS])
-      ok "User permission granted. Starting installation..."
-      ;;
-    *)
-      warn "Permission declined by user. Nothing was downloaded or modified. Exiting gracefully."
-      exit 0
-      ;;
-  esac
+# ==============================================================================
+# PERMISSION GATE (Handles both Compatible Full-AI Mode & Incompatible Lightweight Fallback)
+# ==============================================================================
+if [[ "$HW_RC" -ne 0 || "$LIGHTWEIGHT_MODE" == "1" ]]; then
+  LIGHTWEIGHT_MODE=1
+  printf "\n${bold}${yellow}⚡ Lightweight Mode Available (No Ollama / No Local LLM Required — ~80 MB RAM)${reset}\n"
+  printf "   Even without Ollama or %s, AgentGuard can run in ${bold}Lightweight Mode${reset} with:\n" "$AGENTGUARD_MODEL"
+  printf "   • ${bold}Tier 1–3 Firewall:${reset} 21 deterministic regex rules, Base64/paraphrase heuristics, secret redaction\n"
+  printf "   • ${bold}Tier 3.5 Threat-RAG & GraphRAG:${reset} Contextual RAG + ColBERT MaxSim + 3-hop exfiltration lineage\n"
+  printf "   • ${bold}Circuit Breaker, MCP Hub, Coding Agent Hooks & AMOLED Dashboard${reset}\n"
+  printf "   • ${bold}Config:${reset} firewall.llm_guard.enabled = false (Ollama & model are NOT downloaded)\n\n"
+
+  if [[ "$ASSUME_YES" != "1" ]]; then
+    REPLY="$(prompt_user "Would you like to install AgentGuard in Lightweight Mode instead (skipping Ollama & ${AGENTGUARD_MODEL})? [y/N]: ")" || exit 1
+    case "$REPLY" in
+      [yY]|[yY][eE][sS])
+        ok "Permission granted for Lightweight Mode (llm_guard.enabled: false)."
+        ;;
+      *)
+        warn "Installation declined. Ollama, '${AGENTGUARD_MODEL}', and AgentGuard were NOT installed. Exiting gracefully."
+        exit 0
+        ;;
+    esac
+  else
+    ok "Proceeding with Lightweight Mode (llm_guard.enabled: false)."
+  fi
 else
-  ok "Explicit permission flag (--yes / AGENTGUARD_ASSUME_YES=1) provided."
+  printf "\n${bold}Planned Installation & System Actions (Full AI Mode):${reset}\n"
+  printf "  1. Download and install ${bold}Ollama${reset} (if not already installed)\n"
+  printf "  2. Download AI model ${bold}%s${reset} via Ollama\n" "$AGENTGUARD_MODEL"
+  printf "  3. Install & configure ${bold}AgentGuard${reset} in %s (+ OpenCode, Claude Code, Codex hooks)\n" "$AGENTGUARD_HOME"
+  printf "  4. Configure ${bold}Ollama${reset} and ${bold}AgentGuard${reset} to start automatically on device boot\n"
+  printf "  5. Verify Ollama, model inference, and AgentGuard firewall readiness\n\n"
+
+  if [[ "$ASSUME_YES" != "1" ]]; then
+    REPLY="$(prompt_user "Do you grant permission to proceed with downloading and installing these components? [y/N]: ")" || exit 1
+    case "$REPLY" in
+      [yY]|[yY][eE][sS])
+        ok "User permission granted. Starting Full AI Mode installation..."
+        ;;
+      *)
+        warn "Permission declined by user. Nothing was downloaded or modified. Exiting gracefully."
+        exit 0
+        ;;
+    esac
+  else
+    ok "Explicit permission flag (--yes / AGENTGUARD_ASSUME_YES=1) provided."
+  fi
 fi
 
 mkdir -p "$AGENTGUARD_HOME" "$BIN_DIR"
 
 # ==============================================================================
-# STEP 2: DOWNLOAD & INSTALL OLLAMA + PULL REQUIRED AI MODEL
+# STEP 2: DOWNLOAD & INSTALL OLLAMA + PULL REQUIRED AI MODEL (Skipped in Lightweight Mode)
 # ==============================================================================
-section "Step 2/5 · Ollama Runtime & AI Model (${AGENTGUARD_MODEL}) Installation"
-
-if command -v ollama >/dev/null 2>&1; then
-  ok "Ollama is already installed ($(ollama --version 2>/dev/null || echo 'detected'))"
+if [[ "$LIGHTWEIGHT_MODE" == "1" ]]; then
+  section "Step 2/5 · Ollama & AI Model Installation (Skipped — Lightweight Mode)"
+  info "Skipping Ollama and '${AGENTGUARD_MODEL}' download (llm_guard.enabled: false)."
 else
-  info "Downloading and installing Ollama from https://ollama.com/install.sh ..."
-  curl -fsSL https://ollama.com/install.sh | sh
-  ok "Ollama installed ($(ollama --version 2>/dev/null || echo 'ready'))"
-fi
+  section "Step 2/5 · Ollama Runtime & AI Model (${AGENTGUARD_MODEL}) Installation"
 
-# Ensure Ollama daemon is running before pulling the model
-wait_for_ollama() {
-  local retries="${1:-30}"
-  local i=0
-  while (( i < retries )); do
-    if curl -fsS "${OLLAMA_HOST_URL}/api/tags" >/dev/null 2>&1; then
-      return 0
+  if command -v ollama >/dev/null 2>&1; then
+    ok "Ollama is already installed ($(ollama --version 2>/dev/null || echo 'detected'))"
+  else
+    info "Downloading and installing Ollama from https://ollama.com/install.sh ..."
+    curl -fsSL https://ollama.com/install.sh | sh
+    ok "Ollama installed ($(ollama --version 2>/dev/null || echo 'ready'))"
+  fi
+
+  wait_for_ollama() {
+    local retries="${1:-30}"
+    local i=0
+    while (( i < retries )); do
+      if curl -fsS "${OLLAMA_HOST_URL}/api/tags" >/dev/null 2>&1; then
+        return 0
+      fi
+      sleep 0.5
+      (( i += 1 ))
+    done
+    return 1
+  }
+
+  if ! wait_for_ollama 2; then
+    info "Starting Ollama server in the background..."
+    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files ollama.service >/dev/null 2>&1; then
+      sudo systemctl start ollama 2>/dev/null || true
     fi
-    sleep 0.5
-    (( i += 1 ))
-  done
-  return 1
-}
+    if ! wait_for_ollama 4; then
+      nohup ollama serve >"$AGENTGUARD_HOME/ollama.log" 2>&1 &
+    fi
+    if ! wait_for_ollama 30; then
+      fail "Ollama server did not become reachable at ${OLLAMA_HOST_URL} — check $AGENTGUARD_HOME/ollama.log"
+    fi
+  fi
+  ok "Ollama daemon is active at ${OLLAMA_HOST_URL}"
 
-if ! wait_for_ollama 2; then
-  info "Starting Ollama server in the background..."
-  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files ollama.service >/dev/null 2>&1; then
-    sudo systemctl start ollama 2>/dev/null || true
-  fi
-  if ! wait_for_ollama 4; then
-    nohup ollama serve >"$AGENTGUARD_HOME/ollama.log" 2>&1 &
-  fi
-  if ! wait_for_ollama 30; then
-    fail "Ollama server did not become reachable at ${OLLAMA_HOST_URL} — check $AGENTGUARD_HOME/ollama.log"
-  fi
+  info "Downloading AI model '${AGENTGUARD_MODEL}' via Ollama (this may take a moment)..."
+  ollama pull "$AGENTGUARD_MODEL"
+  ok "AI model '${AGENTGUARD_MODEL}' downloaded successfully"
 fi
-ok "Ollama daemon is active at ${OLLAMA_HOST_URL}"
-
-info "Downloading AI model '${AGENTGUARD_MODEL}' via Ollama (this may take a moment)..."
-ollama pull "$AGENTGUARD_MODEL"
-ok "AI model '${AGENTGUARD_MODEL}' downloaded successfully"
 
 # ==============================================================================
 # STEP 3: INSTALL & CONFIGURE AGENTGUARD + MODEL ENVIRONMENT
@@ -418,8 +456,14 @@ else
   warn "dashboard/dist not found and npm is not installed (API will run headless)"
 fi
 
-# Configure ~/.agentguard/agentguard.yaml with the selected model & Ollama endpoint
+# Configure ~/.agentguard/agentguard.yaml (llm_guard.enabled = true in Full Mode, false in Lightweight Mode)
 CONFIG_FILE="$AGENTGUARD_HOME/agentguard.yaml"
+if [[ "$LIGHTWEIGHT_MODE" == "1" ]]; then
+  LLM_GUARD_ENABLED="false"
+else
+  LLM_GUARD_ENABLED="true"
+fi
+
 if [[ ! -f "$CONFIG_FILE" ]]; then
   cat > "$CONFIG_FILE" <<EOF
 server:
@@ -431,7 +475,7 @@ firewall:
   enabled: true
   observe_mode: false
   llm_guard:
-    enabled: true
+    enabled: ${LLM_GUARD_ENABLED}
     provider: ollama
     model: "${AGENTGUARD_MODEL}"
     endpoint: "${OLLAMA_HOST_URL}"
@@ -441,10 +485,9 @@ firewall:
 dashboard:
   dir: "${APP_DIR}/dashboard/dist"
 EOF
-  ok "Created model & runtime configuration at $CONFIG_FILE"
+  ok "Created configuration at $CONFIG_FILE (llm_guard.enabled: ${LLM_GUARD_ENABLED})"
 else
-  # Update model in existing config if present
-  AGENTGUARD_CFG="$CONFIG_FILE" AGENTGUARD_MODEL="$AGENTGUARD_MODEL" OLLAMA_HOST_URL="$OLLAMA_HOST_URL" "$VENV_DIR/bin/python" - <<'PY'
+  AGENTGUARD_CFG="$CONFIG_FILE" AGENTGUARD_MODEL="$AGENTGUARD_MODEL" OLLAMA_HOST_URL="$OLLAMA_HOST_URL" LLM_GUARD_ENABLED="$LLM_GUARD_ENABLED" "$VENV_DIR/bin/python" - <<'PY'
 import os, pathlib, yaml
 p = pathlib.Path(os.environ["AGENTGUARD_CFG"])
 try:
@@ -452,14 +495,14 @@ try:
     if isinstance(data, dict):
         fw = data.setdefault("firewall", {})
         lg = fw.setdefault("llm_guard", {})
-        lg["enabled"] = True
+        lg["enabled"] = os.environ["LLM_GUARD_ENABLED"].lower() == "true"
         lg["model"] = os.environ["AGENTGUARD_MODEL"]
         lg["endpoint"] = os.environ["OLLAMA_HOST_URL"]
         p.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 except Exception:
     pass
 PY
-  ok "Updated model configuration in $CONFIG_FILE (model: ${AGENTGUARD_MODEL})"
+  ok "Updated configuration in $CONFIG_FILE (llm_guard.enabled: ${LLM_GUARD_ENABLED})"
 fi
 
 WRAPPER="$BIN_DIR/agentguard"
@@ -479,27 +522,26 @@ info "Configuring coding agent integrations (OpenCode, Claude Code, Codex CLI)..
 ok "Agent hooks wired"
 
 # ==============================================================================
-# STEP 4: CONFIGURE AUTO-START ON DEVICE BOOT (Ollama + AgentGuard)
+# STEP 4: CONFIGURE AUTO-START ON DEVICE BOOT
 # ==============================================================================
 section "Step 4/5 · Configuring Auto-Start on Device Boot"
 
-OLLAMA_BIN="$(command -v ollama)"
 BOOT_METHOD="daemon"
+OLLAMA_BIN="$(command -v ollama 2>/dev/null || true)"
 
-# 4a. Ensure Ollama starts automatically on boot and preloads the required model
 if command -v systemctl >/dev/null 2>&1 && [[ -d /run/systemd/system ]]; then
-  # System-level or user-level systemd
-  if systemctl list-unit-files ollama.service >/dev/null 2>&1; then
-    if ! systemctl is-enabled ollama.service >/dev/null 2>&1; then
-      info "Enabling system-level ollama.service on boot..."
-      sudo systemctl enable --now ollama.service 2>/dev/null || true
+  if [[ "$LIGHTWEIGHT_MODE" == "0" && -n "$OLLAMA_BIN" ]]; then
+    if systemctl list-unit-files ollama.service >/dev/null 2>&1; then
+      if ! systemctl is-enabled ollama.service >/dev/null 2>&1; then
+        info "Enabling system-level ollama.service on boot..."
+        sudo systemctl enable --now ollama.service 2>/dev/null || true
+      else
+        sudo systemctl start ollama.service 2>/dev/null || true
+      fi
+      ok "Ollama systemd service (ollama.service) enabled for device boot"
     else
-      sudo systemctl start ollama.service 2>/dev/null || true
-    fi
-    ok "Ollama systemd service (ollama.service) enabled for device boot"
-  else
-    mkdir -p "$HOME/.config/systemd/user"
-    cat > "$HOME/.config/systemd/user/agentguard-ollama.service" <<EOF
+      mkdir -p "$HOME/.config/systemd/user"
+      cat > "$HOME/.config/systemd/user/agentguard-ollama.service" <<EOF
 [Unit]
 Description=Ollama Local AI Runtime (Managed by AgentGuard)
 After=network-online.target
@@ -513,13 +555,18 @@ RestartSec=3
 [Install]
 WantedBy=default.target
 EOF
-    systemctl --user daemon-reload 2>/dev/null || true
-    systemctl --user enable --now agentguard-ollama.service 2>/dev/null || true
-    ok "Configured user systemd service (agentguard-ollama.service) for boot"
+      systemctl --user daemon-reload 2>/dev/null || true
+      systemctl --user enable --now agentguard-ollama.service 2>/dev/null || true
+      ok "Configured user systemd service (agentguard-ollama.service) for boot"
+    fi
   fi
 
-  # 4b. Configure AgentGuard + model warmup service on boot
   mkdir -p "$HOME/.config/systemd/user"
+  EXEC_START_PRE=""
+  if [[ "$LIGHTWEIGHT_MODE" == "0" && -n "$OLLAMA_BIN" ]]; then
+    EXEC_START_PRE="ExecStartPre=-/bin/sh -c '${OLLAMA_BIN} list >/dev/null 2>&1 && curl -fsS ${OLLAMA_HOST_URL}/api/generate -d \"{\\\"model\\\":\\\"${AGENTGUARD_MODEL}\\\",\\\"prompt\\\":\\\"\\\",\\\"keep_alive\\\":\\\"24h\\\"}\" >/dev/null 2>&1 || true'"
+  fi
+
   cat > "$HOME/.config/systemd/user/agentguard.service" <<EOF
 [Unit]
 Description=AgentGuard Local Security Firewall, Threat-RAG & MCP Hub
@@ -531,7 +578,7 @@ Environment="AGENTGUARD_HOME=${AGENTGUARD_HOME}"
 Environment="AGENTGUARD_CONFIG=${CONFIG_FILE}"
 Environment="AGENTGUARD_REPO_ROOT=${APP_DIR}"
 Environment="AGENTGUARD_DASHBOARD_DIR=${APP_DIR}/dashboard/dist"
-ExecStartPre=-/bin/sh -c '${OLLAMA_BIN} list >/dev/null 2>&1 && curl -fsS ${OLLAMA_HOST_URL}/api/generate -d "{\"model\":\"${AGENTGUARD_MODEL}\",\"prompt\":\"\",\"keep_alive\":\"24h\"}" >/dev/null 2>&1 || true'
+${EXEC_START_PRE}
 ExecStart=${VENV_DIR}/bin/agentguard serve --config ${CONFIG_FILE} --port ${AGENTGUARD_PORT}
 Restart=always
 RestartSec=3
@@ -546,7 +593,6 @@ EOF
       loginctl enable-linger "${USER:-$(id -un)}" 2>/dev/null || true
     fi
     if [[ "$START_DAEMON" == "1" ]]; then
-      # Stop any manual pidfile daemon first so systemd owns the port cleanly
       "$WRAPPER" stop >/dev/null 2>&1 || true
       systemctl --user restart agentguard.service
     fi
@@ -554,10 +600,11 @@ EOF
   fi
 fi
 
-# Fallback to crontab @reboot if systemd user session is unavailable (e.g. minimal VM/container)
+# Fallback to crontab @reboot if systemd user session is unavailable
 if [[ "$BOOT_METHOD" == "daemon" ]]; then
   BOOT_SCRIPT="$AGENTGUARD_HOME/boot-start.sh"
-  cat > "$BOOT_SCRIPT" <<EOF
+  if [[ "$LIGHTWEIGHT_MODE" == "0" && -n "$OLLAMA_BIN" ]]; then
+    cat > "$BOOT_SCRIPT" <<EOF
 #!/usr/bin/env bash
 export PATH="\$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
 if ! curl -fsS "${OLLAMA_HOST_URL}/api/tags" >/dev/null 2>&1; then
@@ -567,6 +614,13 @@ fi
 curl -fsS "${OLLAMA_HOST_URL}/api/generate" -d '{"model":"${AGENTGUARD_MODEL}","prompt":"","keep_alive":"24h"}' >/dev/null 2>&1 || true
 "${WRAPPER}" serve --daemon --port "${AGENTGUARD_PORT}"
 EOF
+  else
+    cat > "$BOOT_SCRIPT" <<EOF
+#!/usr/bin/env bash
+export PATH="\$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:\$PATH"
+"${WRAPPER}" serve --daemon --port "${AGENTGUARD_PORT}"
+EOF
+  fi
   chmod +x "$BOOT_SCRIPT"
 
   if command -v crontab >/dev/null 2>&1; then
@@ -587,28 +641,29 @@ EOF
 fi
 
 # ==============================================================================
-# STEP 5: END-TO-END INSTALLATION & MODEL VERIFICATION
+# STEP 5: END-TO-END INSTALLATION VERIFICATION
 # ==============================================================================
-section "Step 5/5 · Verifying Installation, Model Inference & Firewall Health"
+section "Step 5/5 · Verifying Installation & Firewall Readiness"
 
-# 5.1 Verify Ollama API + Model presence
-if curl -fsS "${OLLAMA_HOST_URL}/api/tags" | grep -q "${AGENTGUARD_MODEL%%:*}"; then
-  ok "Verified Ollama registry contains '${AGENTGUARD_MODEL}'"
+if [[ "$LIGHTWEIGHT_MODE" == "0" ]]; then
+  if curl -fsS "${OLLAMA_HOST_URL}/api/tags" | grep -q "${AGENTGUARD_MODEL%%:*}"; then
+    ok "Verified Ollama registry contains '${AGENTGUARD_MODEL}'"
+  else
+    fail "Model '${AGENTGUARD_MODEL}' was not found in Ollama registry (${OLLAMA_HOST_URL}/api/tags)."
+  fi
+
+  info "Verifying '${AGENTGUARD_MODEL}' inference response and pinning model in memory..."
+  if curl -fsS "${OLLAMA_HOST_URL}/api/generate" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\":\"${AGENTGUARD_MODEL}\",\"prompt\":\"Check environment health\",\"stream\":false,\"keep_alive\":\"24h\",\"options\":{\"num_predict\":8}}" >/dev/null; then
+    ok "Verified live AI model inference (${AGENTGUARD_MODEL} responded & pinned with keep_alive=24h)"
+  else
+    fail "Model '${AGENTGUARD_MODEL}' failed test inference request."
+  fi
 else
-  fail "Model '${AGENTGUARD_MODEL}' was not found in Ollama registry (${OLLAMA_HOST_URL}/api/tags)."
+  ok "Lightweight Mode verified: Ollama & '${AGENTGUARD_MODEL}' skipped (llm_guard.enabled: false)"
 fi
 
-# 5.2 Warm up & verify model inference with 24h keep_alive
-info "Verifying '${AGENTGUARD_MODEL}' inference response and pinning model in memory..."
-if curl -fsS "${OLLAMA_HOST_URL}/api/generate" \
-  -H "Content-Type: application/json" \
-  -d "{\"model\":\"${AGENTGUARD_MODEL}\",\"prompt\":\"Check environment health\",\"stream\":false,\"keep_alive\":\"24h\",\"options\":{\"num_predict\":8}}" >/dev/null; then
-  ok "Verified live AI model inference (${AGENTGUARD_MODEL} responded & pinned with keep_alive=24h)"
-else
-  fail "Model '${AGENTGUARD_MODEL}' failed test inference request."
-fi
-
-# 5.3 Verify AgentGuard service health & Llama Guard connectivity
 if [[ "$START_DAEMON" == "1" ]]; then
   HEALTH_JSON=""
   for _ in {1..30}; do
@@ -622,20 +677,31 @@ if [[ "$START_DAEMON" == "1" ]]; then
     fail "AgentGuard service did not respond at http://127.0.0.1:${AGENTGUARD_PORT}/v1/healthz"
   fi
 
-  LLM_STATUS="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get("llm_guard",""))' "$HEALTH_JSON")"
+  LLM_STATUS="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get("llm_guard"))' "$HEALTH_JSON")"
   RAG_CHUNKS="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get("rag_chunks",0))' "$HEALTH_JSON")"
   MCP_SERVERS="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get("mcp_servers",0))' "$HEALTH_JSON")"
 
   ok "Verified AgentGuard API & Dashboard at http://127.0.0.1:${AGENTGUARD_PORT}/ (status: ok)"
-  ok "Verified Tier-4 Llama Guard status: ${LLM_STATUS} (${AGENTGUARD_MODEL})"
+  if [[ "$LIGHTWEIGHT_MODE" == "1" ]]; then
+    ok "Verified Firewall Mode: Lightweight Tiers 1–3.5 active (llm_guard: disabled)"
+  else
+    ok "Verified Tier-4 Llama Guard status: ${LLM_STATUS} (${AGENTGUARD_MODEL})"
+  fi
   ok "Verified Threat-RAG & MCP Hub: ${RAG_CHUNKS} contextual chunks, ${MCP_SERVERS} built MCP servers"
 fi
 
 ok "Verified boot auto-start configuration (mode: ${BOOT_METHOD})"
 
-printf "\n${bold}${green}🎉 Setup Complete! AgentGuard + Ollama (${AGENTGUARD_MODEL}) are verified and active.${reset}\n"
-printf "   • ${bold}Dashboard:${reset}      http://127.0.0.1:${AGENTGUARD_PORT}/\n"
-printf "   • ${bold}AI Model:${reset}       ${AGENTGUARD_MODEL} (${OLLAMA_HOST_URL})\n"
+if [[ "$LIGHTWEIGHT_MODE" == "1" ]]; then
+  printf "\n${bold}${green}🎉 Setup Complete! AgentGuard (Lightweight Mode) is verified and active.${reset}\n"
+  printf "   • ${bold}Dashboard:${reset}      http://127.0.0.1:${AGENTGUARD_PORT}/\n"
+  printf "   • ${bold}Firewall Mode:${reset}  Lightweight (Tiers 1–3.5: Regex + Heuristics + Secrets + Threat-RAG + GraphRAG)\n"
+  printf "   • ${bold}LLM Guard:${reset}      Disabled (llm_guard.enabled: false)\n"
+else
+  printf "\n${bold}${green}🎉 Setup Complete! AgentGuard + Ollama (${AGENTGUARD_MODEL}) are verified and active.${reset}\n"
+  printf "   • ${bold}Dashboard:${reset}      http://127.0.0.1:${AGENTGUARD_PORT}/\n"
+  printf "   • ${bold}AI Model:${reset}       ${AGENTGUARD_MODEL} (${OLLAMA_HOST_URL})\n"
+fi
 printf "   • ${bold}Auto-Boot:${reset}      Enabled (${BOOT_METHOD})\n"
 printf "   • ${bold}Check Status:${reset}   agentguard status\n"
 printf "   • ${bold}Hardware Check:${reset} agentguard hwcheck\n"
