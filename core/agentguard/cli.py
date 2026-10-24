@@ -118,6 +118,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
             print(f"  logs:      {log_path}")
             return 0
         print(f"AgentGuard daemon (pid {proc.pid}) did not pass healthcheck within 12s — check {log_path}", file=sys.stderr)
+        with contextlib.suppress(Exception):
+            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-15:]
+            if lines:
+                print("\n--- Last log lines ---", file=sys.stderr)
+                print("\n".join(lines), file=sys.stderr)
         return 1
 
     _pidfile().write_text(str(os.getpid()))
