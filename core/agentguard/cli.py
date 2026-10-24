@@ -567,6 +567,107 @@ def cmd_mcp(args: argparse.Namespace) -> int:
         db.close()
 
 
+def _unsetup_hooks() -> None:
+    # 1. OpenCode
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")).expanduser()
+    opencode_plugin = xdg / "opencode" / "plugins" / "agentguard"
+    if opencode_plugin.is_dir():
+        shutil.rmtree(opencode_plugin, ignore_errors=True)
+        print(f"  [opencode] removed plugin ({opencode_plugin})")
+
+    # 2. Claude Code
+    claude_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude")).expanduser()
+    claude_settings = claude_dir / "settings.json"
+    if claude_settings.is_file():
+        try:
+            doc = json.loads(claude_settings.read_text(encoding="utf-8"))
+            hooks_map = doc.get("hooks", {})
+            changed = False
+            for ev in list(hooks_map.keys()):
+                cleaned = _merge_hook_groups(hooks_map[ev], [], "agentguard_hook.py")
+                if cleaned != hooks_map[ev]:
+                    changed = True
+                hooks_map[ev] = cleaned
+                if not cleaned:
+                    del hooks_map[ev]
+            if changed:
+                claude_settings.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+                print(f"  [claude]   unregistered hooks from {claude_settings}")
+        except Exception:
+            pass
+
+    # 3. Codex CLI
+    codex_home = Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex")).expanduser()
+    codex_hooks = codex_home / "hooks.json"
+    if codex_hooks.is_file():
+        try:
+            doc = json.loads(codex_hooks.read_text(encoding="utf-8"))
+            hooks_map = doc.get("hooks", {})
+            changed = False
+            for ev in list(hooks_map.keys()):
+                cleaned = _merge_hook_groups(hooks_map[ev], [], "agentguard_codex_hook.py")
+                if cleaned != hooks_map[ev]:
+                    changed = True
+                hooks_map[ev] = cleaned
+                if not cleaned:
+                    del hooks_map[ev]
+            if changed:
+                codex_hooks.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+                print(f"  [codex]    unregistered hooks from {codex_hooks}")
+        except Exception:
+            pass
+    hook_file = codex_home / "hooks" / "agentguard_codex_hook.py"
+    if hook_file.is_file():
+        hook_file.unlink(missing_ok=True)
+
+
+def cmd_uninstall(args: argparse.Namespace) -> int:
+    if not getattr(args, "yes", False):
+        confirm = input("Are you sure you want to uninstall AgentGuard? [y/N]: ").strip().lower()
+        if confirm not in ("y", "yes"):
+            print("Uninstallation cancelled.")
+            return 0
+
+    print("Uninstalling AgentGuard...")
+    # Stop daemon
+    cmd_stop(args)
+
+    # Disable systemd if present
+    subprocess.run(["systemctl", "--user", "stop", "agentguard.service"], stderr=subprocess.DEVNULL, check=False)
+    subprocess.run(["systemctl", "--user", "disable", "agentguard.service"], stderr=subprocess.DEVNULL, check=False)
+    user_unit = Path.home() / ".config" / "systemd" / "user" / "agentguard.service"
+    if user_unit.is_file():
+        user_unit.unlink(missing_ok=True)
+    subprocess.run(["systemctl", "--user", "daemon-reload"], stderr=subprocess.DEVNULL, check=False)
+
+    # Unregister hooks
+    _unsetup_hooks()
+
+    # Remove wrapper
+    bin_wrapper = Path.home() / ".local" / "bin" / "agentguard"
+    if bin_wrapper.is_file():
+        bin_wrapper.unlink(missing_ok=True)
+        print(f"  [bin]      removed {bin_wrapper}")
+
+    # Remove data dir
+    ag_home = _agentguard_home()
+    if ag_home.is_dir():
+        if getattr(args, "keep_data", False):
+            for item in ("app", "venv", "hooks", "agentguard.pid", "boot-start.sh"):
+                p = ag_home / item
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+                elif p.is_file():
+                    p.unlink(missing_ok=True)
+            print(f"  [data]     removed application files (kept {ag_home / 'events.db'})")
+        else:
+            shutil.rmtree(ag_home, ignore_errors=True)
+            print(f"  [data]     removed {ag_home}")
+
+    print("AgentGuard uninstalled successfully.")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="agentguard", description=__doc__)
     sub = parser.add_subparsers(dest="cmd")
@@ -592,6 +693,10 @@ def main() -> None:
     hw_p.add_argument("--model", default="llama-guard3:1b", help="target AI model name (default: llama-guard3:1b)")
     hw_p.add_argument("--json", action="store_true", help="output JSON result")
 
+    uninst_p = sub.add_parser("uninstall", help="cleanly remove AgentGuard, services, and agent hooks")
+    uninst_p.add_argument("-y", "--yes", action="store_true", help="skip confirmation")
+    uninst_p.add_argument("--keep-data", action="store_true", help="preserve ~/.agentguard/events.db")
+
     mcp_p = sub.add_parser("mcp", help="run an AgentGuard MCP server over stdio")
     mcp_p.add_argument(
         "--server",
@@ -612,6 +717,8 @@ def main() -> None:
         sys.exit(cmd_status(args))
     if args.cmd == "hwcheck":
         sys.exit(cmd_hwcheck(args))
+    if args.cmd == "uninstall":
+        sys.exit(cmd_uninstall(args))
     if args.cmd == "mcp":
         sys.exit(cmd_mcp(args))
     if args.cmd == "stop":

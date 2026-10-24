@@ -129,6 +129,21 @@ curl http://127.0.0.1:8907/v1/healthz
 # Visit http://127.0.0.1:8907/ in your browser (served directly by FastAPI)
 ```
 
+### Uninstallation
+
+To cleanly stop all background services, unregister hooks from OpenCode, Claude Code, and Codex CLI, and remove AgentGuard:
+
+```bash
+# One-command remote uninstaller:
+curl -fsSL https://raw.githubusercontent.com/Sajib023/AgentGuard/main/uninstall.sh | bash
+
+# Or via the CLI (if installed):
+agentguard uninstall
+
+# Or from a local checkout (preserves events.db with --keep-data):
+./uninstall.sh --keep-data
+```
+
 ---
 
 ## How Each Part Works

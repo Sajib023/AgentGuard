@@ -88,3 +88,64 @@ def test_check_hardware_pass_and_fail(tmp_path: Path, monkeypatch):
     assert fail_res["ram"]["pass"] is False
     assert fail_res["storage"]["pass"] is False
 
+
+def test_unsetup_hooks_clean_removal(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("AGENTGUARD_HOME", str(tmp_path / "ag_home"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+
+    from agentguard.cli import _unsetup_hooks
+
+    # Pre-seed user hooks and agentguard hooks
+    claude_dir = tmp_path / "claude"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / "settings.json").write_text(
+        json.dumps(
+            {
+                "theme": "dark",
+                "hooks": {
+                    "PreToolUse": [
+                        {"hooks": [{"type": "command", "command": "echo existing-user-hook"}]},
+                        {"hooks": [{"type": "command", "command": "python3 /path/agentguard_hook.py"}]},
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    codex_dir = tmp_path / "codex"
+    codex_dir.mkdir(parents=True)
+    (codex_dir / "hooks.json").write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {"hooks": [{"type": "command", "command": "echo existing-codex-hook"}]},
+                        {"hooks": [{"type": "command", "command": "python3 /path/agentguard_codex_hook.py"}]},
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    opencode_plugin_dir = tmp_path / "xdg" / "opencode" / "plugins" / "agentguard"
+    opencode_plugin_dir.mkdir(parents=True)
+    (opencode_plugin_dir / "index.js").write_text("console.log('plugin')")
+
+    _unsetup_hooks()
+
+    assert not opencode_plugin_dir.exists()
+
+    claude_settings = json.loads((claude_dir / "settings.json").read_text(encoding="utf-8"))
+    assert claude_settings["theme"] == "dark"
+    assert len(claude_settings["hooks"]["PreToolUse"]) == 1
+    assert "agentguard_hook.py" not in claude_settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+
+    codex_hooks = json.loads((codex_dir / "hooks.json").read_text(encoding="utf-8"))
+    assert len(codex_hooks["hooks"]["PreToolUse"]) == 1
+    assert "agentguard_codex_hook.py" not in codex_hooks["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+
+
