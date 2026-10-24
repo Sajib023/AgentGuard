@@ -81,7 +81,7 @@ flowchart TB
     API <--> UI
 ```
 
-Nothing leaves your machine except the model calls your coding agents already make: all firewall classification, contextual chunk enrichment, vector/token indexing, and GraphRAG lineage traversal execute **locally**.
+Nothing leaves your machine except the model calls your coding agents already make: all firewall classification, contextual chunk enrichment, vector/token indexing, and GraphRAG lineage traversal execute **locally**. Every `serve` launch additionally exposes an optional Cloudflare Quick Tunnel URL guarded by a random access code (`/login`) so the dashboard can be opened remotely without weakening the local trust model.
 
 ---
 
@@ -93,6 +93,8 @@ python3 -m venv .venv
 .venv/bin/pip install -e ./core
 
 # 2. Start AgentGuard (API + Dashboard at http://127.0.0.1:8907/)
+#    Prints the local URL, a per-launch random access code, and the
+#    Cloudflare Quick Tunnel public URL once cloudflared is ready.
 .venv/bin/agentguard serve            # or: agentguard serve anywhere on PATH
 
 # 3. Verify health & environment (deps, SQLite path, local Ollama models)
@@ -105,7 +107,43 @@ curl http://127.0.0.1:8907/v1/healthz
 .venv/bin/agentguard mcp --server agentguard-lineage-mcp
 
 # 5. Open the AMOLED Developer Dashboard
-# Visit http://127.0.0.1:8907/ in your browser (served directly by FastAPI)
+# Visit http://127.0.0.1:8907/ in your browser (served directly by FastAPI).
+# Remote visitors must enter the per-launch access code (see `agentguard status`).
+```
+
+### Remote Access — Cloudflare Quick Tunnel + Access-Code Auth
+
+Every `agentguard serve` launch:
+
+1. **Starts a Cloudflare Quick Tunnel** (`cloudflared tunnel --url http://127.0.0.1:8907`, no Cloudflare account required) and prints its public URL once it's ready:
+
+   ```text
+   AgentGuard started in background (pid 4321)
+     dashboard:    http://127.0.0.1:8907/  (local)
+     access code:  XK4M-Q8RT  <- required to open the dashboard remotely
+     public URL:   https://amber-nightfall-national-glucose.trycloudflare.com  (Cloudflare Quick Tunnel)
+     logs:         ~/.agentguard/agentguard.log
+   ```
+
+2. **Generates a fresh random access code** (8 chars from an unambiguous alphabet, rotated on every service start). It is printed at startup, retrievable via `agentguard status`, and stored with `0600` permissions at `~/.agentguard/access_code`.
+
+3. **Gates everything remote behind that code** — HTTP API, dashboard, and WebSocket feed:
+   - Requests arriving from outside the machine (tunnel `cf-*` headers, non-loopback IPs) without a session get `401` on API routes, a redirect to the built-in `/login` page on the dashboard, and a closed WebSocket.
+   - Entering the code once at `/login` posts to `POST /v1/auth/login` and sets an HttpOnly session cookie (also returns a bearer token for API clients via `Authorization: Bearer <token>` or `X-AgentGuard-Token`).
+   - Brute force is throttled: 5 wrong codes lock login for 30 s (configurable).
+   - Local processes (hooks, `agentguard status`, `curl` on `localhost`) exempt themselves automatically.
+
+Toggles (config file `tunnel:`/`auth:` sections win, CLI over env over config):
+
+| Method | Tunnel | Auth |
+| --- | --- | --- |
+| CLI flag | `--tunnel` / `--no-tunnel` | `--no-auth` |
+| Env | `AGENTGUARD_TUNNEL=0\|1` | `AGENTGUARD_AUTH=0\|1` |
+| Config | `tunnel.enabled` | `auth.enabled` |
+
+```bash
+agentguard serve --no-tunnel        # offline: local dashboard only
+agentguard status                   # shows the current access code + tunnel URL
 ```
 
 ---
@@ -430,6 +468,7 @@ Served directly by the core service at `http://127.0.0.1:8907/`, the React dashb
 | `POST /v1/breaker/reset/{sid}` | Reset a tripped circuit breaker while preserving persisted session limit overrides. |
 | `POST /v1/breaker/limits` | Set per-session (SQLite persistent) or per-agent budget overrides. |
 | `POST /v1/config/mode` | Toggle runtime firewall mode between `enforce` and `observe`. |
+| `GET /login` · `POST /v1/auth/login` · `POST /v1/auth/logout` · `GET /v1/auth/status` | Dashboard access-code gate: login page, code→session cookie/token exchange, logout, and auth status. Remote traffic only; local hosts are exempt. |
 | `WS /v1/ws` | Live event stream (`?replay=200&session_id=...&types=...`); supports bidirectional event ingestion and `ping`/`pong`. |
 
 ---
@@ -476,6 +515,17 @@ breaker:
 
 dashboard:
   dir: ""                      # empty → repo dashboard/dist
+
+tunnel:
+  enabled: true                # cloudflared Quick Tunnel on every serve; prints the public URL
+  cloudflared_path: ""         # empty → PATH + ~/.local/bin, /usr/local/bin, /usr/bin, /opt/homebrew/bin
+  extra_args: []               # e.g. named-tunnel flags from Cloudflare
+
+auth:
+  enabled: true                # random access-code gate for remote (tunnel/LAN) dashboard access
+  code_length: 8
+  max_attempts: 5              # failed logins before lockout
+  lockout_seconds: 30.0
 ```
 
 ---
@@ -498,5 +548,7 @@ cd dashboard && npm run build
 ## Honest Limits
 
 - **Fail-open adapter posture:** If the local AgentGuard service is stopped, adapters allow the coding agent to continue working (prioritizing developer availability over hard lockouts). Run `agentguard doctor` to verify health.
+- **Quick tunnels are ephemeral:** The Cloudflare Quick Tunnel URL rotates on every service launch. A named tunnel with your own domain can be configured through `tunnel.extra_args` for stable URLs.
+- **Trust boundary of the access code:** The auth layer protects *remote* surfaces (tunnel traffic and non-loopback IPs). Local processes on the host are trusted users by design so hooks and the CLI need no secrets; anyone with shell access to the machine can always reach the dashboard.
 - **Small local model triage:** `llama-guard3:1b` is a fast local triage classifier, not a frontier reasoning model. Deterministic rules, structural heuristics, ColBERT MaxSim retrieval, and GraphRAG provenance tracking are the load-bearing layers.
 - **Codex prompt-level sanitization:** Because Codex CLI hooks cannot rewrite user prompts in place (unlike `PreToolUse` which rewrites `updatedInput`), a prompt containing raw secrets is denied rather than rewritten so credentials never reach the model.

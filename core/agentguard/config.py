@@ -111,11 +111,39 @@ class DashboardConfig(BaseModel):
     dir: str = ""                    # empty -> ../dashboard/dist relative to this file
 
 
+class TunnelConfig(BaseModel):
+    """Cloudflare Quick Tunnel (no Cloudflare account required).
+
+    When enabled, ``agentguard serve`` launches ``cloudflared tunnel``
+    against the local server and publishes a random
+    ``https://<id>.trycloudflare.com`` URL so the dashboard is reachable
+    from anywhere; remote requests must present the dashboard access
+    code (see ``auth``)."""
+    enabled: bool = True
+    cloudflared_path: str = ""       # empty -> PATH + well-known locations
+    extra_args: list[str] = Field(default_factory=list)  # named tunnels etc.
+
+
+class AuthConfig(BaseModel):
+    """Random access code auth for dashboard/API access beyond localhost.
+
+    A fresh code is generated on every service start and printed to the
+    terminal (also `agentguard status`). Local processes (hooks, CLI)
+    are exempt; remote requests must enter the code once and receive a
+    session cookie."""
+    enabled: bool = True
+    code_length: int = 8             # random chars (0-9, A-Z minus ambiguous)
+    max_attempts: int = 5            # failed logins before lockout
+    lockout_seconds: float = 30.0    # lockout window after max failed attempts
+
+
 class Config(BaseModel):
     server: ServerConfig = Field(default_factory=ServerConfig)
     firewall: FirewallConfig = Field(default_factory=FirewallConfig)
     breaker: BreakerConfig = Field(default_factory=BreakerConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    tunnel: TunnelConfig = Field(default_factory=TunnelConfig)
+    auth: AuthConfig = Field(default_factory=AuthConfig)
 
     @classmethod
     def load(cls, path: str | None = None) -> "Config":

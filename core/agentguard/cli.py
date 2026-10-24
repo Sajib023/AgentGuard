@@ -13,11 +13,45 @@ import subprocess
 import sys
 import time
 
+from .security import format_access_code, read_access_code
+from .tunnel import read_tunnel_url
+
 
 def _agentguard_home() -> Path:
     base = Path(os.environ.get("AGENTGUARD_HOME") or (Path.home() / ".agentguard")).expanduser()
     base.mkdir(parents=True, exist_ok=True)
     return base
+
+
+def _resolve_feature_flag(flag_true: bool, flag_false: bool, env_value: str | None, cfg_value: bool) -> bool:
+    """Flag > env (0/false/no/off win) > config default."""
+    if flag_true:
+        return True
+    if flag_false:
+        return False
+    if env_value is not None and env_value.strip() != "":
+        return env_value.strip().lower() not in ("0", "false", "no", "off")
+    return bool(cfg_value)
+
+
+def _print_access_points(cfg, tunnel_url: str | None = None) -> None:
+    """Shared output: local URL + access code + tunnel URL line."""
+    check_host = "127.0.0.1" if cfg.server.host in ("0.0.0.0", "::") else cfg.server.host
+    print(f"  dashboard:    http://{check_host}:{cfg.server.port}/  (local)", flush=True)
+    if cfg.auth.enabled:
+        code = format_access_code(read_access_code())
+        if code:
+            print(f"  access code:  {code}  <- required to open the dashboard remotely", flush=True)
+        else:
+            print("  access code:  (generated at service start; run `agentguard status`)", flush=True)
+    else:
+        print("  access code:  auth disabled — anyone with the URL can open the dashboard", flush=True)
+    if not cfg.tunnel.enabled:
+        print("  tunnel:       disabled (agentguard serve --tunnel to enable)", flush=True)
+    elif tunnel_url:
+        print(f"  public URL:   {tunnel_url}  (Cloudflare Quick Tunnel)", flush=True)
+    else:
+        print("  public URL:   awaiting cloudflared... (or disabled: see config `tunnel.enabled`)", flush=True)
 
 
 def _pidfile() -> Path:
@@ -83,6 +117,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
     if args.observe:
         cfg.firewall.observe_mode = True
 
+    # tunnel / auth switches: --tunnel|--no-tunnel & --no-auth > env > config
+    cfg.tunnel.enabled = _resolve_feature_flag(
+        bool(getattr(args, "tunnel", False)), bool(getattr(args, "no_tunnel", False)),
+        os.environ.get("AGENTGUARD_TUNNEL"), cfg.tunnel.enabled)
+    cfg.auth.enabled = _resolve_feature_flag(
+        False, bool(getattr(args, "no_auth", False)),
+        os.environ.get("AGENTGUARD_AUTH"), cfg.auth.enabled)
+
+    def on_tunnel_url(url: str) -> None:
+        print(f"  public URL:   {url}  (Cloudflare Quick Tunnel)", flush=True)
+
     if getattr(args, "daemon", False):
         pf = _pidfile()
         if pf.is_file():
@@ -92,6 +137,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
                     health = _wait_for_health(cfg.server.host, cfg.server.port, timeout_s=1.5)
                     if health:
                         print(f"AgentGuard already running (pid {existing_pid}) at http://{cfg.server.host}:{cfg.server.port}/")
+                        _print_access_points(cfg, read_tunnel_url())
                         return 0
         cmd = [sys.executable, "-m", "agentguard.cli", "serve"]
         if args.config:
@@ -102,6 +148,12 @@ def cmd_serve(args: argparse.Namespace) -> int:
             cmd.extend(["--port", str(args.port)])
         if args.observe:
             cmd.append("--observe")
+        if getattr(args, "tunnel", False):
+            cmd.append("--tunnel")
+        if getattr(args, "no_tunnel", False):
+            cmd.append("--no-tunnel")
+        if getattr(args, "no_auth", False):
+            cmd.append("--no-auth")
         log_path = _logfile()
         with open(log_path, "a", encoding="utf-8") as log_fh:
             proc = subprocess.Popen(
@@ -112,25 +164,39 @@ def cmd_serve(args: argparse.Namespace) -> int:
                 start_new_session=True,
             )
         health = _wait_for_health(cfg.server.host, cfg.server.port, timeout_s=12.0)
-        if health:
-            print(f"AgentGuard started in background (pid {proc.pid})")
-            print(f"  dashboard: http://{cfg.server.host}:{cfg.server.port}/")
-            print(f"  logs:      {log_path}")
-            return 0
-        print(f"AgentGuard daemon (pid {proc.pid}) did not pass healthcheck within 12s — check {log_path}", file=sys.stderr)
-        with contextlib.suppress(Exception):
-            lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-15:]
-            if lines:
-                print("\n--- Last log lines ---", file=sys.stderr)
-                print("\n".join(lines), file=sys.stderr)
-        return 1
+        if not health:
+            print(f"AgentGuard daemon (pid {proc.pid}) did not pass healthcheck within 12s — check {log_path}", file=sys.stderr)
+            with contextlib.suppress(Exception):
+                lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-15:]
+                if lines:
+                    print("\n--- Last log lines ---", file=sys.stderr)
+                    print("\n".join(lines), file=sys.stderr)
+            return 1
+        print(f"AgentGuard started in background (pid {proc.pid})")
+        tunnel_url = None
+        if cfg.tunnel.enabled:
+            deadline = time.time() + 45.0
+            while time.time() < deadline:
+                tunnel_url = read_tunnel_url()
+                if tunnel_url:
+                    break
+                time.sleep(0.5)
+        _print_access_points(cfg, tunnel_url)
+        if cfg.tunnel.enabled and not tunnel_url:
+            print(f"  tunnel:       not ready within 45s — check {log_path} or `agentguard status`")
+        print(f"  logs:         {log_path}")
+        return 0
 
     _pidfile().write_text(str(os.getpid()))
     try:
         import uvicorn
         from .api import create_app
 
-        app = create_app(cfg)
+        # create_app generates the access code + starts (on lifespan) the tunnel
+        app = create_app(cfg, tunnel_on_url=on_tunnel_url)
+        check_host = "127.0.0.1" if cfg.server.host in ("0.0.0.0", "::") else cfg.server.host
+        print(f"AgentGuard service on http://{check_host}:{cfg.server.port}/")
+        _print_access_points(cfg, None)
         uvicorn.run(app, host=cfg.server.host, port=cfg.server.port, log_level="info")
     except KeyboardInterrupt:
         print("\nshutting down")
@@ -193,6 +259,18 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"  rag_chunks:   {health.get('rag_chunks', 0)}")
         print(f"  mcp_servers:  {health.get('mcp_servers', 0)}")
         print(f"  llama_guard:  {health.get('llama_guard', 'unknown')}")
+        if cfg.auth.enabled:
+            code = format_access_code(read_access_code())
+            print(f"  access code:  {code if code else '(see service startup log)'}")
+        else:
+            print("  access code:  disabled")
+        tunnel_url = health.get("tunnel_url") or read_tunnel_url()
+        if tunnel_url:
+            print(f"  public URL:   {tunnel_url}  (Cloudflare Quick Tunnel — access code required)")
+        elif cfg.tunnel.enabled:
+            print("  public URL:   not running (cloudflared will attach on next `agentguard serve`)")
+        else:
+            print("  public URL:   tunnel disabled")
         return 0
     print("AgentGuard status: STOPPED")
     return 1
@@ -364,6 +442,9 @@ def cmd_setup(args: argparse.Namespace) -> int:
             port=None,
             observe=False,
             daemon=True,
+            tunnel=False,
+            no_tunnel=False,
+            no_auth=False,
         )
         return cmd_serve(serve_args)
     return 0
@@ -677,6 +758,9 @@ def main() -> None:
     serve.add_argument("--port", type=int)
     serve.add_argument("--observe", action="store_true", help="start in observe-only mode")
     serve.add_argument("-d", "--daemon", action="store_true", help="run service detached in the background")
+    serve.add_argument("--tunnel", action="store_true", help="force the Cloudflare Quick Tunnel public URL on")
+    serve.add_argument("--no-tunnel", action="store_true", help="disable the Cloudflare Quick Tunnel (local only)")
+    serve.add_argument("--no-auth", action="store_true", help="disable dashboard access-code auth (NOT recommended with --tunnel)")
 
     setup_p = sub.add_parser("setup", help="auto-configure OpenCode, Claude Code, and Codex CLI hooks")
     setup_p.add_argument("--config", help="YAML config path")

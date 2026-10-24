@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -26,7 +26,14 @@ from .firewall.engine import FirewallEngine
 from .mcp.server import MCPHub
 from .rag.service import ThreatRAGService
 from .schema import AgentKind, Event, EventIn, EventType, FirewallAction, new_event_from
+from .security import (
+    LOGIN_PAGE_HTML,
+    TOKEN_COOKIE,
+    AuthManager,
+    AuthMiddleware,
+)
 from .store import Store
+from .tunnel import read_tunnel_url, setup_tunnel, TunnelManager
 from .utils import now, sha256_text, truncate
 
 
@@ -40,6 +47,8 @@ class AppContext:
     breaker: CircuitBreaker
     rag: ThreatRAGService
     mcp: MCPHub
+    auth: AuthManager
+    tunnel: TunnelManager | None = None
     approval_futures: dict[str, asyncio.Future] = field(default_factory=dict)
     start_ts: float = field(default_factory=now)
 
@@ -102,7 +111,11 @@ class MCPCallBody(BaseModel):
     arguments: dict | None = None
 
 
-def create_app(config: Config | None = None) -> FastAPI:
+class LoginBody(BaseModel):
+    code: str
+
+
+def create_app(config: Config | None = None, tunnel_on_url=None) -> FastAPI:
     cfg = config or Config.load()
     db = Database(cfg.server.db_path or default_db_path())
     store = Store(db)
@@ -114,18 +127,33 @@ def create_app(config: Config | None = None) -> FastAPI:
     ctx = AppContext(
         config=cfg, db=db, store=store, bus=bus,
         firewall=fw, breaker=breaker, rag=rag, mcp=mcp,
+        auth=AuthManager(
+            enabled=cfg.auth.enabled,
+            code_length=cfg.auth.code_length,
+            max_attempts=cfg.auth.max_attempts,
+            lockout_seconds=cfg.auth.lockout_seconds,
+        ),
     )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         _app.state.pruned_on_start = store.prune(now() - cfg.server.retention_hours * 3600)
+        if cfg.tunnel.enabled and not ctx.tunnel:
+            # cloudflared publishes a public URL for the one running server;
+            # started here so the daemon/CLI only carries this app instance.
+            _tunnel = setup_tunnel(cfg=cfg, on_url=tunnel_on_url)
+            ctx.tunnel = _tunnel
         yield
+        if ctx.tunnel is not None:
+            ctx.tunnel.stop()
+            ctx.tunnel = None
         if fw.llm is not None:
             await fw.llm.aclose()
         db.close()
 
     app = FastAPI(title="AgentGuard", version="0.1.0", lifespan=lifespan)
     app.state.ctx = ctx
+    app.add_middleware(AuthMiddleware, auth=ctx.auth)
 
     def agent_kind(name: str | None) -> AgentKind:
         try:
@@ -163,6 +191,64 @@ def create_app(config: Config | None = None) -> FastAPI:
             "observe_mode": cfg.firewall.observe_mode,
             "rag_chunks": rag.status()["contextual_chunks"],
             "mcp_servers": len(mcp.status()["built_servers"]),
+            "tunnel_url": read_tunnel_url(),
+            "auth_enabled": ctx.auth.enabled,
+        }
+
+    # ------------------------------------------------------------------ auth
+    @app.get("/login", include_in_schema=False)
+    async def login_page():
+        return HTMLResponse(LOGIN_PAGE_HTML)
+
+    @app.post("/v1/auth/login")
+    async def auth_login(body: LoginBody):
+        """Exchange the dashboard access code for a session cookie/token."""
+        auth = ctx.auth
+        if not auth.enabled:
+            return {"ok": True, "auth_enabled": False}
+        if auth.is_locked():
+            retry_after = auth.retry_after()
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "too many failed attempts — try again later",
+                         "retry_after": retry_after},
+                headers={"Retry-After": str(retry_after)},
+            )
+        if not auth.verify_code(body.code):
+            retry_after = auth.retry_after()
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "invalid access code" if not auth.is_locked()
+                         else "too many failed attempts — try again later",
+                         "retry_after": retry_after},
+                headers={"Retry-After": str(retry_after)},
+            )
+        resp = JSONResponse(content={
+            "ok": True,
+            "token": auth.token,  # also returned for non-cookie API clients
+        })
+        resp.set_cookie(
+            key=TOKEN_COOKIE,
+            value=auth.token,
+            httponly=True,
+            samesite="lax",
+            secure=False,  # LAN/testing friendly; the quick tunnel is HTTPS and HttpOnly regardless
+            max_age=7 * 24 * 3600,
+        )
+        return resp
+
+    @app.post("/v1/auth/logout")
+    async def auth_logout():
+        resp = JSONResponse(content={"ok": True})
+        resp.delete_cookie(key=TOKEN_COOKIE)
+        return resp
+
+    @app.get("/v1/auth/status")
+    async def auth_status(request: Request):
+        token = AuthMiddleware._extract_token(request.scope)  # noqa: SLF001 (same package)
+        return {
+            "auth_enabled": ctx.auth.enabled,
+            "authenticated": ctx.auth.enabled and ctx.auth.verify_token(token),
         }
 
     # -------------------------------------------------------------- events

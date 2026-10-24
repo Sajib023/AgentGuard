@@ -397,6 +397,53 @@ fi
 # ==============================================================================
 section "Step 3/5 · AgentGuard Core, Environment & Coding Agent Hooks"
 
+# ------------------------------------------------------------------------------
+# Cloudflared — required for the remote dashboard tunnel (no account needed)
+# ------------------------------------------------------------------------------
+info "Checking cloudflared (Cloudflare Tunnel client)..."
+
+CF_BIN=""
+if command -v cloudflared >/dev/null 2>&1; then
+  CF_BIN="$(command -v cloudflared)"
+elif [[ -x "$BIN_DIR/cloudflared" ]]; then
+  CF_BIN="$BIN_DIR/cloudflared"
+fi
+
+if [[ -n "$CF_BIN" ]]; then
+  ok "cloudflared already installed ($CF_BIN)"
+else
+  OS_NAME="$(uname -s)"
+  OS_ARCH="$(uname -m)"
+  CF_TARGET="$BIN_DIR/cloudflared"
+  CF_RC=1
+  if [[ "$OS_NAME" == "Linux" ]]; then
+    if [[ "$OS_ARCH" == "aarch64" || "$OS_ARCH" == "arm64" ]]; then CF_ARCH="arm64"; else CF_ARCH="amd64"; fi
+    CF_URL="https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${CF_ARCH}"
+    info "Downloading cloudflared (linux-${CF_ARCH})..."
+    if curl -fsSL --retry 2 "$CF_URL" -o "${CF_TARGET}.tmp" 2>/dev/null && chmod +x "${CF_TARGET}.tmp" 2>/dev/null; then
+      mv "${CF_TARGET}.tmp" "$CF_TARGET" && CF_RC=0
+    fi
+  elif [[ "$OS_NAME" == "Darwin" ]]; then
+    info "Downloading cloudflared (macOS)..."
+    if curl -fsSL --retry 2 "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-macos.tgz" -o "${CF_TARGET}.tgz" 2>/dev/null; then
+      if tar -xzf "${CF_TARGET}.tgz" -C "$BIN_DIR" cloudflared 2>/dev/null && chmod +x "$CF_TARGET"; then
+        rm -f "${CF_TARGET}.tgz" && CF_RC=0
+      else
+        rm -f "${CF_TARGET}.tgz"
+      fi
+    fi
+  else
+    warn "Unsupported platform for automatic cloudflared install ($OS_NAME/$OS_ARCH)."
+  fi
+  if [[ "$CF_RC" == "0" ]] && "$CF_TARGET" --version >/dev/null 2>&1; then
+    ok "cloudflared installed ($CF_TARGET $("$CF_TARGET" --version 2>/dev/null | awk '{print $NF}'))"
+  else
+    warn "cloudflared could not be installed — dashboard will stay local-only"
+    warn "Install manually (https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/) to enable the tunnel"
+    rm -f "${CF_TARGET}.tmp" "${CF_TARGET}.tgz"
+  fi
+fi
+
 SCRIPT_PATH="${BASH_SOURCE[0]:-}"
 LOCAL_DIR=""
 if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
@@ -493,6 +540,17 @@ firewall:
 
 dashboard:
   dir: "${APP_DIR}/dashboard/dist"
+
+tunnel:
+  enabled: true                     # launches cloudflared on serve and prints the public URL
+  cloudflared_path: ""              # empty -> PATH $BIN_DIR/cloudflared
+  extra_args: []                    # e.g. named tunnel flags from Cloudflare
+
+auth:
+  enabled: true                     # random access code gate for remote dashboard access
+  code_length: 8
+  max_attempts: 5
+  lockout_seconds: 30.0
 EOF
   ok "Created configuration at $CONFIG_FILE (llm_guard.enabled: ${LLM_GUARD_ENABLED})"
 else
@@ -654,6 +712,9 @@ fi
 # ==============================================================================
 section "Step 5/5 · Verifying Installation & Firewall Readiness"
 
+TUNNEL_URL=""
+ACCESS_CODE=""
+
 if [[ "$LIGHTWEIGHT_MODE" == "0" ]]; then
   if curl -fsS "${OLLAMA_HOST_URL}/api/tags" | grep -q "${AGENTGUARD_MODEL%%:*}"; then
     ok "Verified Ollama registry contains '${AGENTGUARD_MODEL}'"
@@ -690,7 +751,31 @@ if [[ "$START_DAEMON" == "1" ]]; then
   RAG_CHUNKS="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get("rag_chunks",0))' "$HEALTH_JSON")"
   MCP_SERVERS="$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(d.get("mcp_servers",0))' "$HEALTH_JSON")"
 
+  # Wait briefly for cloudflared to publish the public Quick Tunnel URL
+  TUNNEL_URL=""
+  for _ in {1..40}; do
+    if [[ -s "$AGENTGUARD_HOME/tunnel_url" ]]; then
+      TUNNEL_URL="$(head -n1 "$AGENTGUARD_HOME/tunnel_url" | tr -d '[:space:]')"
+      break
+    fi
+    sleep 0.5
+  done
+  ACCESS_CODE=""
+  [[ -s "$AGENTGUARD_HOME/access_code" ]] && ACCESS_CODE="$(head -n1 "$AGENTGUARD_HOME/access_code" | tr -d '[:space:]')"
+
   ok "Verified AgentGuard API & Dashboard at http://127.0.0.1:${AGENTGUARD_PORT}/ (status: ok)"
+  if [[ -n "$TUNNEL_URL" ]]; then
+    ok "Verified Cloudflare Quick Tunnel: $TUNNEL_URL (remote dashboard access)"
+  elif [[ -n "$(command -v cloudflared || true)" || -x "$BIN_DIR/cloudflared" ]]; then
+    warn "Cloudflare Tunnel did not publish a URL within 20s — check $AGENTGUARD_HOME/agentguard.log"
+    warn "Local dashboard remains available; run 'agentguard status' later for the URL"
+  else
+    warn "cloudflared unavailable — dashboard is local-only (remote access disabled)"
+  fi
+  if [[ -n "$ACCESS_CODE" ]]; then
+    ok "Generated dashboard access code: $ACCESS_CODE (required for remote/tunnel access)"
+    ok "Local processes (hooks, localhost) skip the code automatically"
+  fi
   if [[ "$LIGHTWEIGHT_MODE" == "1" ]]; then
     ok "Verified Firewall Mode: Lightweight Tiers 1–3.5 active (llm_guard: disabled)"
   else
@@ -710,6 +795,14 @@ else
   printf "\n${bold}${green}🎉 Setup Complete! AgentGuard + Ollama (${AGENTGUARD_MODEL}) are verified and active.${reset}\n"
   printf "   • ${bold}Dashboard:${reset}      http://127.0.0.1:${AGENTGUARD_PORT}/\n"
   printf "   • ${bold}AI Model:${reset}       ${AGENTGUARD_MODEL} (${OLLAMA_HOST_URL})\n"
+fi
+if [[ -n "$TUNNEL_URL" ]]; then
+  printf "   • ${bold}Public Tunnel:${reset}  ${TUNNEL_URL}\n"
+  printf "     ${dim}Open from anywhere; enter the access code below on first visit${reset}\n"
+  printf "   • ${bold}Access Code:${reset}     ${green}${ACCESS_CODE:-see agentguard status}${reset}\n"
+else
+  printf "   • ${bold}Public Tunnel:${reset}  see ${bold}agentguard status${reset} (starts with the service)\n"
+  printf "   • ${bold}Auth Code:${reset}       see ${bold}agentguard status${reset} (required for remote/tunnel access)\n"
 fi
 printf "   • ${bold}Auto-Boot:${reset}      Enabled (${BOOT_METHOD})\n"
 printf "   • ${bold}Check Status:${reset}   agentguard status\n"
