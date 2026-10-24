@@ -421,11 +421,20 @@ else
   fi
   if [[ -d "$APP_DIR/.git" ]]; then
     info "Updating existing AgentGuard checkout in $APP_DIR..."
-    git -C "$APP_DIR" pull --ff-only || warn "git pull skipped (working tree has local changes)"
+    git -C "$APP_DIR" pull --ff-only 2>/dev/null || (command -v gh >/dev/null 2>&1 && gh repo sync "$APP_DIR" 2>/dev/null) || warn "git pull skipped"
   else
-    info "Cloning AgentGuard from $REPO_URL into $APP_DIR..."
+    info "Cloning AgentGuard into $APP_DIR..."
     rm -rf "$APP_DIR"
-    git clone --depth 1 "$REPO_URL" "$APP_DIR"
+    CLONED=0
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+      gh repo clone Sajib023/AgentGuard "$APP_DIR" -- --depth 1 2>/dev/null && CLONED=1
+    fi
+    if [[ "$CLONED" != "1" && -n "${GITHUB_TOKEN:-}" ]]; then
+      git clone --depth 1 "https://${GITHUB_TOKEN}@github.com/Sajib023/AgentGuard.git" "$APP_DIR" 2>/dev/null && CLONED=1
+    fi
+    if [[ "$CLONED" != "1" ]]; then
+      git clone --depth 1 "$REPO_URL" "$APP_DIR"
+    fi
   fi
 fi
 
