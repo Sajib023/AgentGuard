@@ -359,11 +359,11 @@ if ($UserPath -notlike "*$BinDir*") {
 
 # 4.6 Configure Agent Hooks (OpenCode, Claude, Codex)
 Write-Info "Configuring agent hooks..."
-& "$VenvDir\Scripts\python.exe" -m agentguard.cli --config $ConfigFile setup
+& "$VenvDir\Scripts\python.exe" -m agentguard.cli setup --config $ConfigFile
 
 # 4.7 Configure Auto-start on boot (Windows Task Scheduler)
 Write-Info "Configuring Windows Task Scheduler auto-start..."
-& "$VenvDir\Scripts\python.exe" -m agentguard.cli --config $ConfigFile autostart enable --port $Port --model $(if ($InstallMode -eq "Full") { $Model } else { "" })
+& "$VenvDir\Scripts\python.exe" -m agentguard.cli autostart enable --config $ConfigFile --port $Port --model $(if ($InstallMode -eq "Full") { $Model } else { "" })
 
 # ------------------------------------------------------------------------------
 # STEP 5: Verification & Launch
@@ -375,7 +375,7 @@ $AccessCode = ""
 
 if (-not $NoStart) {
     Write-Info "Starting AgentGuard daemon on port $Port..."
-    & "$VenvDir\Scripts\python.exe" -m agentguard.cli --config $ConfigFile serve --daemon
+    & "$VenvDir\Scripts\python.exe" -m agentguard.cli serve --daemon --config $ConfigFile
     
     # Poll for health check
     $Healthy = $false

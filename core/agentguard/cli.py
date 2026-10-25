@@ -757,6 +757,7 @@ def _harden_stdio() -> None:
 def main() -> None:
     _harden_stdio()
     parser = argparse.ArgumentParser(prog="agentguard", description=__doc__)
+    parser.add_argument("--config", help="YAML config path")
     sub = parser.add_subparsers(dest="cmd")
     serve = sub.add_parser("serve", help="run the AgentGuard service")
     serve.add_argument("--config", help="YAML config path")
