@@ -270,11 +270,10 @@ if (Test-Path "$CurrentDir\core") {
 Write-Info "Creating virtual environment in $VenvDir..."
 & $PythonBin -m venv $VenvDir
 $VenvPy = "$VenvDir\Scripts\python.exe"
-$VenvPip = "$VenvDir\Scripts\pip.exe"
 
 Write-Info "Installing AgentGuard core into virtual environment..."
-& $VenvPip install --upgrade pip --quiet
-& $VenvPip install -e "$AppSource\core" --quiet
+& $VenvPy -m pip install --upgrade pip --quiet
+& $VenvPy -m pip install -e "$AppSource\core" --quiet
 Write-Ok "AgentGuard core installed."
 
 # 4.3 Cloudflared for Windows
