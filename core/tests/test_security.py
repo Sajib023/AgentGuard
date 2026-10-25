@@ -188,9 +188,11 @@ def test_find_cloudflared_explicit_path(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(tunnel_mod, "WELL_KNOWN_PATHS", ())
 
     assert find_cloudflared() is None  # nothing installed / discoverable
-    fake = tmp_path / "cloudflared"
+    from agentguard import oscompat
+
+    fake = tmp_path / oscompat.exe_name("cloudflared")
     fake.write_text("#!/bin/sh\nexit 0\n")
-    fake.chmod(0o755)
+    oscompat.make_executable(fake)
     assert find_cloudflared(str(fake)) == fake
     assert find_cloudflared(str(tmp_path / "missing")) is None
     assert find_cloudflared() is None

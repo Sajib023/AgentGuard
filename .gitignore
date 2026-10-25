@@ -25,3 +25,7 @@ node_modules/
 .agents/
 .aws/
 .codex/
+
+# Independent repositories
+site/
+

@@ -163,7 +163,7 @@ class Config(BaseModel):
         if candidate is None or not candidate.is_file():
             return cls()
         try:
-            raw = yaml.safe_load(candidate.read_text()) or {}
+            raw = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
         except yaml.YAMLError as exc:  # pragma: no cover - config typo feedback
             raise ValueError(f"Invalid YAML in {candidate}: {exc}") from exc
         if not isinstance(raw, dict):

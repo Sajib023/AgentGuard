@@ -28,13 +28,22 @@
  * Options in opencode.json plugins entry are supported:
  * ({package: "./.opencode/plugins/agentguard", options: {url, mode, breaker}}).
 */
-import { appendFileSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const _logDir = join(tmpdir(), "opencode");
+let _logDirReady = false;
 
 /** Hook/loop breadcrumbs (tmp; tiny + best-effort — never throws). */
 const _crumb = (msg) => {
   if ((globalThis.__agentguardCrumbCount = (globalThis.__agentguardCrumbCount || 0) + 1) > 600) return;
   try {
-    appendFileSync("/tmp/opencode/agentguard-plugin.log", `${Date.now()} ${msg}\n`);
+    if (!_logDirReady) {
+      mkdirSync(_logDir, { recursive: true });
+      _logDirReady = true;
+    }
+    appendFileSync(join(_logDir, "agentguard-plugin.log"), `${Date.now()} ${msg}\n`);
   } catch {}
 };
 

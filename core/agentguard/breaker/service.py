@@ -9,11 +9,11 @@ from __future__ import annotations
 import collections
 import json
 import os
-import signal
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from .. import oscompat
 from ..config import BreakerConfig, BreakerDefaults
 from ..schema import AgentKind, Event, EventType
 from ..utils import new_id, now, sha256_text
@@ -350,17 +350,19 @@ class CircuitBreaker:
         me = os.getpid()
         if not pid or pid == me or pid == os.getppid():
             return "refused_not_agent_pid"
-        try:
-            # Prefer the process-group of the recorded agent CLI
-            pgid = os.getpgid(pid)
-            if pgid == os.getpgrp():
-                return "refused_same_group"
-            os.killpg(pgid, signal.SIGTERM)
-        except (PermissionError, ProcessLookupError):
+        # never take down the service itself (or whatever launched it)
+        if pid in oscompat.ancestor_pids(me):
+            return "refused_ancestor"
+        if not oscompat.IS_WINDOWS:
             try:
-                os.kill(pid, signal.SIGTERM)
+                # Prefer the process-group of the recorded agent CLI
+                if os.getpgid(pid) == os.getpgrp():
+                    return "refused_same_group"
             except (PermissionError, ProcessLookupError):
+                pass
+            except OSError:
                 return "failed"
-        except OSError:
+        if not oscompat.is_pid_alive(pid):
             return "failed"
-        return "stopped"
+        # POSIX: SIGTERM to the agent's process group; Windows: taskkill /T /F
+        return "stopped" if oscompat.terminate(pid, tree=True) else "failed"

@@ -47,6 +47,30 @@ ENFORCE = os.environ.get("AGENTGUARD_MODE", "enforce") == "enforce"
 BREAKER = os.environ.get("AGENTGUARD_BREAKER", "1") != "0"
 APPROVAL_TIMEOUT = int(os.environ.get("AGENTGUARD_APPROVAL_TIMEOUT", "120"))
 
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+def _detect_agent_pid() -> int:
+    ppid = os.getppid()
+    if sys.platform != "win32":
+        return ppid
+    try:
+        import psutil  # type: ignore
+
+        proc = psutil.Process(os.getpid())
+        for parent in proc.parents():
+            name = parent.name().lower()
+            if any(term in name for term in ("claude", "node", "python")):
+                return parent.pid
+    except Exception:
+        pass
+    return ppid
+
 
 def _post(path: str, payload: dict) -> dict | None:
     """Fail-open HTTP POST helper."""
@@ -106,11 +130,11 @@ def _register(sid: str) -> None:
         "type": "session_start",
         "data": {"cwd": os.getcwd()},
     }]})
-    # The hook runs as a child of the Claude Code process: ppid is a good
-    # proxy for the agent's pid so the breaker can kill it if configured.
-    ppid = os.getppid()
+    # The hook runs as a child of the Claude Code process: ppid (or detected parent)
+    # is a proxy for the agent's pid so the breaker can kill it if configured.
+    ppid = _detect_agent_pid()
     own = os.getpid()
-    if ppid != own:
+    if ppid and ppid != own:
         _post(f"/v1/sessions/{sid}/pid", {"pid": ppid, "ppid": None})
 
 
