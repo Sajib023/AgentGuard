@@ -8,7 +8,8 @@ param(
     [switch]$NoStart = ($env:AGENTGUARD_NO_START -eq "1"),
     [switch]$HwCheckOnly = $false,
     [string]$Port = $env:AGENTGUARD_PORT,
-    [string]$RepoUrl = $env:AGENTGUARD_REPO_URL
+    [string]$RepoUrl = $env:AGENTGUARD_REPO_URL,
+    [string]$Branch = if ($env:AGENTGUARD_BRANCH) { $env:AGENTGUARD_BRANCH } else { "master" }
 )
 
 $ErrorActionPreference = "Stop"
@@ -200,10 +201,68 @@ if (Test-Path "$CurrentDir\core") {
     Write-Info "Installing from local checkout ($CurrentDir)..."
     $AppSource = $CurrentDir
 } else {
-    Write-Info "Cloning repository $RepoUrl into $AppDir..."
-    if (Test-Path $AppDir) { Remove-Item -Recurse -Force $AppDir }
-    git clone --depth 1 $RepoUrl $AppDir
-    $AppSource = $AppDir
+    $GitBin = Get-Command "git" -ErrorAction SilentlyContinue
+    if (-not $GitBin) {
+        # Check standard Git install locations on Windows
+        $StandardGit = @(
+            "$env:ProgramFiles\Git\cmd\git.exe",
+            "${env:ProgramFiles(x86)}\Git\cmd\git.exe",
+            "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe"
+        )
+        foreach ($gp in $StandardGit) {
+            if (Test-Path $gp) {
+                $GitBin = @{ Source = $gp }
+                $env:Path = "$env:Path;" + (Split-Path $gp)
+                break
+            }
+        }
+    }
+
+    if (-not $GitBin) {
+        Write-Info "Git not detected in PATH. Attempting to install Git via winget..."
+        try {
+            winget install -e --id Git.Git --accept-package-agreements --accept-source-agreements --silent
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "User") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "Machine")
+            $GitBin = Get-Command "git" -ErrorAction SilentlyContinue
+        } catch {}
+    }
+
+    if ($GitBin) {
+        Write-Info "Cloning repository $RepoUrl ($Branch) into $AppDir..."
+        if (Test-Path $AppDir) { Remove-Item -Recurse -Force $AppDir }
+        & $GitBin.Source clone --depth 1 -b $Branch $RepoUrl $AppDir
+        $AppSource = $AppDir
+    } else {
+        Write-Info "Git unavailable. Downloading repository archive directly from GitHub..."
+        if (Test-Path $AppDir) { Remove-Item -Recurse -Force $AppDir }
+        New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
+        
+        $cleanRepo = $RepoUrl.TrimEnd("/").TrimEnd(".git")
+        $zipUrl = "$cleanRepo/archive/refs/heads/$Branch.zip"
+        $zipFile = "$env:TEMP\agentguard-$Branch.zip"
+        $extractDir = "$env:TEMP\agentguard-extract"
+
+        if (Test-Path $extractDir) { Remove-Item -Recurse -Force $extractDir }
+        Write-Info "Downloading archive: $zipUrl..."
+        try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-WebRequest -Uri $zipUrl -OutFile $zipFile -UseBasicParsing
+            Write-Info "Extracting archive into $AppDir..."
+            Expand-Archive -Path $zipFile -DestinationPath $extractDir -Force
+            
+            $extractedRoot = Get-ChildItem -Path $extractDir -Directory | Select-Object -First 1
+            if ($extractedRoot) {
+                Copy-Item -Path "$($extractedRoot.FullName)\*" -Destination $AppDir -Recurse -Force
+            }
+            Write-Ok "Repository archive extracted successfully."
+        } catch {
+            Write-Fail "Failed to download repository archive: $_"
+        } finally {
+            Remove-Item -Force $zipFile -ErrorAction SilentlyContinue
+            Remove-Item -Recurse -Force $extractDir -ErrorAction SilentlyContinue
+        }
+        $AppSource = $AppDir
+    }
 }
 
 # 4.2 Python virtual environment
