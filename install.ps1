@@ -370,18 +370,63 @@ Write-Info "Configuring Windows Task Scheduler auto-start..."
 # ------------------------------------------------------------------------------
 Write-Section "Step 5/5: Service Verification"
 
+$TunnelUrl = ""
+$AccessCode = ""
+
 if (-not $NoStart) {
-    Write-Info "Starting AgentGuard daemon..."
+    Write-Info "Starting AgentGuard daemon on port $Port..."
     & "$VenvDir\Scripts\python.exe" -m agentguard.cli --config $ConfigFile serve --daemon
-    Start-Sleep -Seconds 2
-    & "$VenvDir\Scripts\python.exe" -m agentguard.cli --config $ConfigFile status
+    
+    # Poll for health check
+    $Healthy = $false
+    for ($i = 0; $i -lt 30; $i++) {
+        try {
+            $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/v1/healthz" -TimeoutSec 2 -ErrorAction SilentlyContinue
+            if ($resp) { $Healthy = $true; break }
+        } catch {}
+        Start-Sleep -Milliseconds 400
+    }
+
+    if (-not $Healthy) {
+        Write-Warn "AgentGuard service did not respond at http://127.0.0.1:$Port/v1/healthz yet."
+    } else {
+        Write-Ok "AgentGuard service is active and healthy."
+    }
+
+    # Wait up to 20 seconds for cloudflared to publish tunnel URL
+    Write-Info "Waiting for Cloudflare Quick Tunnel and access code..."
+    $TunnelFile = "$AgentGuardHome\tunnel_url"
+    for ($i = 0; $i -lt 40; $i++) {
+        if (Test-Path $TunnelFile) {
+            $val = (Get-Content -Path $TunnelFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+            if ($val -and $val.Trim()) { $TunnelUrl = $val.Trim(); break }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+
+    $CodeFile = "$AgentGuardHome\access_code"
+    if (Test-Path $CodeFile) {
+        $rawCode = (Get-Content -Path $CodeFile -ErrorAction SilentlyContinue | Select-Object -First 1)
+        if ($rawCode) { $AccessCode = $rawCode.Trim() }
+    }
 } else {
     Write-Info "Service start skipped (--no-start). Run 'agentguard serve --daemon' to start."
 }
 
 Write-Host ""
 Write-Host "==============================================================================" -ForegroundColor Green
-Write-Host "  AgentGuard is ready on Windows!" -ForegroundColor Green
-Write-Host "  Dashboard:    http://127.0.0.1:$Port/" -ForegroundColor White
-Write-Host "  CLI:          agentguard status | agentguard doctor | agentguard stop" -ForegroundColor White
+Write-Host "  AgentGuard Runtime Security Firewall is active" -ForegroundColor Green
+Write-Host "  * Dashboard (Local):        http://127.0.0.1:$Port/" -ForegroundColor White
+if ($AccessCode) {
+    $half = [math]::Max(1, [math]::Floor($AccessCode.Length / 2))
+    $displayCode = "$($AccessCode.Substring(0, $half))-$($AccessCode.Substring($half))"
+    Write-Host "  * Access Code:              $displayCode  (required for remote access)" -ForegroundColor Yellow
+}
+if ($TunnelUrl) {
+    Write-Host "  * Cloudflare Quick Tunnel:  $TunnelUrl" -ForegroundColor Cyan
+} else {
+    Write-Host "  * Cloudflare Quick Tunnel:  Awaiting tunnel... (run 'agentguard status' in a few seconds)" -ForegroundColor DarkGray
+}
+Write-Host "  * Service Logs:             $AgentGuardHome\agentguard.log" -ForegroundColor DarkGray
+Write-Host "  * CLI Commands:             agentguard status | agentguard doctor | agentguard stop" -ForegroundColor White
 Write-Host "==============================================================================" -ForegroundColor Green
