@@ -48,6 +48,30 @@ URL = os.environ.get("AGENTGUARD_URL", "http://127.0.0.1:8907").rstrip("/")
 ENFORCE = os.environ.get("AGENTGUARD_MODE", "enforce") == "enforce"
 BREAKER = os.environ.get("AGENTGUARD_BREAKER", "1") != "0"
 
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        try:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+def _detect_agent_pid() -> int:
+    ppid = os.getppid()
+    if sys.platform != "win32":
+        return ppid
+    try:
+        import psutil  # type: ignore
+
+        proc = psutil.Process(os.getpid())
+        for parent in proc.parents():
+            name = parent.name().lower()
+            if any(term in name for term in ("codex", "python", "node")):
+                return parent.pid
+    except Exception:
+        pass
+    return ppid
+
 
 def _out(obj: dict) -> None:
     print(json.dumps(obj))
@@ -105,9 +129,9 @@ def _register(sid: str, ev: dict) -> None:
         "data": {"cwd": ev.get("cwd") or os.getcwd(),
                  "model": ev.get("model") or None},
     }]})
-    ppid = os.getppid()
+    ppid = _detect_agent_pid()
     own = os.getpid()
-    if ppid != own:
+    if ppid and ppid != own:
         _post(f"/v1/sessions/{sid}/pid", {"pid": ppid, "ppid": None})
 
 

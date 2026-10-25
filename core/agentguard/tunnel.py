@@ -20,14 +20,32 @@ import threading
 from pathlib import Path
 from typing import Callable
 
+from . import oscompat
+
 TUNNEL_URL_RE = re.compile(r"https://[-a-zA-Z0-9.]+\.trycloudflare\.com")
 
-WELL_KNOWN_PATHS = (
-    Path.home() / ".local" / "bin" / "cloudflared",
-    Path("/usr/local/bin/cloudflared"),
-    Path("/usr/bin/cloudflared"),
-    Path("/opt/homebrew/bin/cloudflared"),
-)
+
+def _well_known_paths() -> tuple[Path, ...]:
+    if oscompat.IS_WINDOWS:
+        local_app = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+        program_files = Path(os.environ.get("ProgramFiles") or r"C:\Program Files")
+        program_files_x86 = Path(os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)")
+        return (
+            local_app / "AgentGuard" / "bin" / "cloudflared.exe",
+            Path.home() / ".agentguard" / "bin" / "cloudflared.exe",
+            local_app / "Microsoft" / "WinGet" / "Links" / "cloudflared.exe",
+            program_files / "cloudflared" / "cloudflared.exe",
+            program_files_x86 / "cloudflared" / "cloudflared.exe",
+        )
+    return (
+        Path.home() / ".local" / "bin" / "cloudflared",
+        Path("/usr/local/bin/cloudflared"),
+        Path("/usr/bin/cloudflared"),
+        Path("/opt/homebrew/bin/cloudflared"),
+    )
+
+
+WELL_KNOWN_PATHS = _well_known_paths()
 
 
 def _agentguard_home() -> Path:
@@ -40,13 +58,13 @@ def find_cloudflared(explicit: str = "") -> Path | None:
     """Locate the cloudflared binary: explicit config > $PATH > well-known paths."""
     if explicit:
         p = Path(explicit).expanduser()
-        if p.is_file() and os.access(p, os.X_OK):
+        if oscompat.is_executable_file(p):
             return p
     which = shutil.which("cloudflared")
     if which:
         return Path(which)
     for p in WELL_KNOWN_PATHS:
-        if p.is_file() and os.access(p, os.X_OK):
+        if oscompat.is_executable_file(p):
             return p
     return None
 
@@ -86,43 +104,16 @@ def stop_stale_tunnel(state_dir: Path | None = None, port: int | None = None, ho
     d = state_dir or _agentguard_home()
     killed = False
     if port:
-        pkill = shutil.which("pkill")
-        if pkill:
-            try:
-                r = subprocess.run(
-                    [pkill, "-f", f"--url http://{host}:{port}"],
-                    capture_output=True, timeout=5,
-                )
-                killed = killed or r.returncode == 0
-            except Exception:
-                pass
+        killed = oscompat.kill_matching(f"--url http://{host}:{port}") or killed
     pid_file = d / "tunnel.pid"
     try:
         pid = int(pid_file.read_text(encoding="utf-8").strip() or 0)
     except (OSError, ValueError):
         pid = 0
     if pid > 0 and pid != os.getpid():
-        args = ""
-        try:
-            argv = Path("/proc") / str(pid) / "cmdline"  # Linux
-            args = argv.read_bytes().decode("utf-8", "ignore") if argv.is_file() else ""
-        except OSError:
-            args = ""
-        if not args:
-            ps = shutil.which("ps")
-            if ps:
-                try:
-                    out = subprocess.run([ps, "-p", str(pid), "-o", "args="],
-                                         capture_output=True, text=True, timeout=5)
-                    args = out.stdout.strip()
-                except Exception:
-                    args = ""
+        args = oscompat.process_cmdline(pid)
         if "cloudflared" in args and "tunnel" in args:
-            try:
-                subprocess.run(["kill", str(pid)], check=False)
-                killed = True
-            except Exception:
-                pass
+            killed = oscompat.terminate(pid) or killed
     clear_tunnel_state(d)
     return killed
 
@@ -168,8 +159,10 @@ class TunnelManager:
                 stderr=subprocess.STDOUT,  # cloudflared writes everything to stderr
                 stdin=subprocess.DEVNULL,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 bufsize=1,
-                start_new_session=True,
+                **oscompat.detached_popen_kwargs(detached=False),
             )
         except OSError as exc:
             print(f"[agentguard] tunnel: failed to start cloudflared ({exc})", flush=True)

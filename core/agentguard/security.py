@@ -28,6 +28,8 @@ from pathlib import Path
 
 from starlette.datastructures import Headers
 
+from . import oscompat
+
 TOKEN_COOKIE = "agentguard_token"
 
 # Exempt from auth for remote clients: the login page itself and the login API.
@@ -99,7 +101,7 @@ class AuthManager:
         try:
             path = self._state_dir / "access_code"
             path.write_text(self.code + "\n", encoding="utf-8")
-            path.chmod(0o600)
+            oscompat.secure_file(path)
         except OSError:
             pass
 

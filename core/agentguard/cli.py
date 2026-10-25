@@ -8,11 +8,11 @@ import json
 import os
 from pathlib import Path
 import shutil
-import signal
 import subprocess
 import sys
 import time
 
+from . import oscompat
 from .security import format_access_code, read_access_code
 from .tunnel import read_tunnel_url
 
@@ -78,15 +78,8 @@ def _repo_root() -> Path:
 
 
 def _is_pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
+    # NB: never use os.kill(pid, 0) here — on Windows it *terminates* the process.
+    return oscompat.is_pid_alive(pid)
 
 
 def _wait_for_health(host: str, port: int, timeout_s: float = 10.0) -> dict | None:
@@ -155,13 +148,16 @@ def cmd_serve(args: argparse.Namespace) -> int:
         if getattr(args, "no_auth", False):
             cmd.append("--no-auth")
         log_path = _logfile()
+        child_env = dict(os.environ)
+        child_env.setdefault("PYTHONUTF8", "1")  # Windows consoles default to cp1252
         with open(log_path, "a", encoding="utf-8") as log_fh:
             proc = subprocess.Popen(
                 cmd,
                 stdout=log_fh,
                 stderr=log_fh,
                 stdin=subprocess.DEVNULL,
-                start_new_session=True,
+                env=child_env,
+                **oscompat.detached_popen_kwargs(detached=True),
             )
         health = _wait_for_health(cfg.server.host, cfg.server.port, timeout_s=12.0)
         if not health:
@@ -215,24 +211,19 @@ def cmd_stop(_: argparse.Namespace) -> int:
     if not pid or pid == os.getpid():
         print("invalid or self pid — refusing")
         return 1
-    try:
-        os.kill(pid, signal.SIGTERM)
-        print(f"sent SIGTERM to {pid}")
-    except ProcessLookupError:
+    if not oscompat.is_pid_alive(pid):
         print("process already gone")
         with contextlib.suppress(FileNotFoundError):
             pf.unlink()
         return 0
-    for _ in range(30):
-        try:
-            os.kill(pid, 0)
-            time.sleep(0.15)
-        except ProcessLookupError:
-            print("service stopped")
-            break
+    # Windows: taskkill /T also reaps the cloudflared child the service spawned
+    oscompat.terminate(pid, tree=oscompat.IS_WINDOWS)
+    print(f"sent stop request to {pid}")
+    if oscompat.wait_for_exit(pid, timeout=4.5):
+        print("service stopped")
     else:
-        os.kill(pid, signal.SIGKILL)
-        print("forced SIGKILL")
+        oscompat.terminate(pid, tree=True, force=True)
+        print("forced kill")
     with contextlib.suppress(FileNotFoundError):
         pf.unlink()
     return 0
@@ -322,7 +313,7 @@ def _setup_claude(repo: Path) -> bool:
     hooks_dir.mkdir(parents=True, exist_ok=True)
     dest_hook = hooks_dir / "agentguard_hook.py"
     shutil.copy2(src, dest_hook)
-    dest_hook.chmod(0o755)
+    oscompat.make_executable(dest_hook)
 
     claude_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR") or (Path.home() / ".claude")).expanduser()
     claude_dir.mkdir(parents=True, exist_ok=True)
@@ -343,7 +334,7 @@ def _setup_claude(repo: Path) -> bool:
         hooks_map = {}
         doc["hooks"] = hooks_map
 
-    cmd_str = f"python3 {dest_hook}"
+    cmd_str = oscompat.hook_command(dest_hook)
     events = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd")
     for ev in events:
         existing = hooks_map.get(ev, [])
@@ -368,11 +359,11 @@ def _setup_codex(repo: Path) -> bool:
     hooks_dir.mkdir(parents=True, exist_ok=True)
     dest_hook = hooks_dir / "agentguard_codex_hook.py"
     shutil.copy2(src, dest_hook)
-    dest_hook.chmod(0o755)
+    oscompat.make_executable(dest_hook)
 
     template = json.loads(example.read_text(encoding="utf-8"))
     template_hooks = template.get("hooks", {})
-    cmd_str = f"python3 {dest_hook}"
+    cmd_str = oscompat.hook_command(dest_hook)
 
     hooks_json_path = codex_home / "hooks.json"
     doc: dict = {}
@@ -475,20 +466,9 @@ def check_hardware(model: str = "llama-guard3:1b", target_dir: str | None = None
     arch_ok = arch in supported_archs
     cores = os.cpu_count() or 1
     cores_ok = cores >= min_cores
-    cpu_model = platform.processor() or arch or "Unknown CPU"
-    flags: set[str] = set()
-    if Path("/proc/cpuinfo").is_file():
-        with contextlib.suppress(Exception):
-            for line in Path("/proc/cpuinfo").read_text(encoding="utf-8", errors="ignore").splitlines():
-                if line.lower().startswith("model name") and ":" in line:
-                    cpu_model = line.split(":", 1)[1].strip()
-                elif line.lower().startswith(("flags", "features")) and ":" in line:
-                    flags.update(line.split(":", 1)[1].strip().lower().split())
-    elif sys.platform == "darwin":
-        with contextlib.suppress(Exception):
-            out = subprocess.check_output(["sysctl", "-n", "machdep.cpu.brand_string"], text=True).strip()
-            if out:
-                cpu_model = out
+    cpu_model, flags = oscompat.cpu_info()
+    if not cpu_model:
+        cpu_model = arch or "Unknown CPU"
 
     simd_list: list[str] = []
     if arch in ("x86_64", "amd64"):
@@ -504,22 +484,7 @@ def check_hardware(model: str = "llama-guard3:1b", target_dir: str | None = None
     cpu_ok = arch_ok and cores_ok and simd_ok
 
     # 2. RAM check
-    total_ram_mb = 0
-    avail_ram_mb = 0
-    if Path("/proc/meminfo").is_file():
-        mem: dict[str, int] = {}
-        with contextlib.suppress(Exception):
-            for line in Path("/proc/meminfo").read_text(encoding="utf-8", errors="ignore").splitlines():
-                if ":" in line:
-                    k, v = line.split(":", 1)
-                    mem[k.strip()] = int(v.strip().split()[0]) // 1024
-        total_ram_mb = mem.get("MemTotal", 0)
-        avail_ram_mb = mem.get("MemAvailable", mem.get("MemFree", 0))
-    elif sys.platform == "darwin":
-        with contextlib.suppress(Exception):
-            mem_bytes = int(subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True).strip())
-            total_ram_mb = mem_bytes // (1024 * 1024)
-            avail_ram_mb = total_ram_mb // 2
+    total_ram_mb, avail_ram_mb = oscompat.memory_info()
     ram_ok = total_ram_mb >= min_ram_mb and avail_ram_mb >= min_avail_mb
 
     # 3. Storage check
@@ -713,28 +678,38 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
     # Stop daemon
     cmd_stop(args)
 
-    # Disable systemd if present
-    subprocess.run(["systemctl", "--user", "stop", "agentguard.service"], stderr=subprocess.DEVNULL, check=False)
-    subprocess.run(["systemctl", "--user", "disable", "agentguard.service"], stderr=subprocess.DEVNULL, check=False)
-    user_unit = Path.home() / ".config" / "systemd" / "user" / "agentguard.service"
-    if user_unit.is_file():
-        user_unit.unlink(missing_ok=True)
-    subprocess.run(["systemctl", "--user", "daemon-reload"], stderr=subprocess.DEVNULL, check=False)
+    # Remove start-at-login registration
+    if oscompat.IS_WINDOWS:
+        from . import autostart
+
+        for method in autostart.disable():
+            print(f"  [boot]     removed {method} auto-start")
+    elif shutil.which("systemctl"):
+        subprocess.run(["systemctl", "--user", "stop", "agentguard.service"], stderr=subprocess.DEVNULL, check=False)
+        subprocess.run(["systemctl", "--user", "disable", "agentguard.service"], stderr=subprocess.DEVNULL, check=False)
+        user_unit = Path.home() / ".config" / "systemd" / "user" / "agentguard.service"
+        if user_unit.is_file():
+            user_unit.unlink(missing_ok=True)
+        subprocess.run(["systemctl", "--user", "daemon-reload"], stderr=subprocess.DEVNULL, check=False)
 
     # Unregister hooks
     _unsetup_hooks()
 
-    # Remove wrapper
-    bin_wrapper = Path.home() / ".local" / "bin" / "agentguard"
-    if bin_wrapper.is_file():
-        bin_wrapper.unlink(missing_ok=True)
-        print(f"  [bin]      removed {bin_wrapper}")
+    # Remove wrapper(s)
+    wrappers = [Path.home() / ".local" / "bin" / "agentguard"]
+    if oscompat.IS_WINDOWS:
+        local_app = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+        wrappers.append(local_app / "AgentGuard" / "bin" / "agentguard.cmd")
+    for bin_wrapper in wrappers:
+        if bin_wrapper.is_file():
+            bin_wrapper.unlink(missing_ok=True)
+            print(f"  [bin]      removed {bin_wrapper}")
 
     # Remove data dir
     ag_home = _agentguard_home()
     if ag_home.is_dir():
         if getattr(args, "keep_data", False):
-            for item in ("app", "venv", "hooks", "agentguard.pid", "boot-start.sh"):
+            for item in ("app", "venv", "hooks", "agentguard.pid", "boot-start.sh", "boot_start.pyw"):
                 p = ag_home / item
                 if p.is_dir():
                     shutil.rmtree(p, ignore_errors=True)
@@ -744,12 +719,43 @@ def cmd_uninstall(args: argparse.Namespace) -> int:
         else:
             shutil.rmtree(ag_home, ignore_errors=True)
             print(f"  [data]     removed {ag_home}")
+        if oscompat.IS_WINDOWS and (ag_home / "venv").exists():
+            # the running interpreter lives in venv\ and is locked by Windows
+            print(f"  [data]     {ag_home / 'venv'} is in use — uninstall.ps1 removes it after exit")
 
     print("AgentGuard uninstalled successfully.")
     return 0
 
 
+def cmd_autostart(args: argparse.Namespace) -> int:
+    from . import autostart
+
+    if args.action == "status":
+        print(json.dumps(autostart.status(), indent=2))
+        return 0
+    if args.action == "disable":
+        removed = autostart.disable()
+        print(f"auto-start disabled ({', '.join(removed) if removed else 'nothing registered'})")
+        return 0
+    try:
+        method = autostart.enable(config=args.config, port=args.port, model=args.model, ollama=args.ollama)
+    except Exception as exc:
+        print(f"auto-start not configured: {exc}", file=sys.stderr)
+        return 1
+    print(f"auto-start enabled via {method}")
+    return 0
+
+
+def _harden_stdio() -> None:
+    """Never crash on a non-UTF-8 Windows console / redirected pipe."""
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            with contextlib.suppress(Exception):
+                stream.reconfigure(errors="replace")
+
+
 def main() -> None:
+    _harden_stdio()
     parser = argparse.ArgumentParser(prog="agentguard", description=__doc__)
     sub = parser.add_subparsers(dest="cmd")
     serve = sub.add_parser("serve", help="run the AgentGuard service")
@@ -789,6 +795,12 @@ def main() -> None:
         help="which custom MCP server to expose over stdio",
     )
     mcp_p.add_argument("--config", help="YAML config path")
+    auto_p = sub.add_parser("autostart", help="manage start-at-login (Windows Task Scheduler / systemd --user)")
+    auto_p.add_argument("action", choices=["enable", "disable", "status"])
+    auto_p.add_argument("--config", help="YAML config path baked into the launcher")
+    auto_p.add_argument("--port", type=int, help="service port baked into the launcher")
+    auto_p.add_argument("--model", help="Ollama model to warm up at login (empty = skip)")
+    auto_p.add_argument("--ollama", default="http://127.0.0.1:11434", help="Ollama endpoint for warm-up")
     sub.add_parser("stop", help="stop a running service (pidfile)")
     sub.add_parser("doctor", help="check environment (deps, ollama, db)")
     sub.add_parser("version", help="print version")
@@ -805,6 +817,8 @@ def main() -> None:
         sys.exit(cmd_uninstall(args))
     if args.cmd == "mcp":
         sys.exit(cmd_mcp(args))
+    if args.cmd == "autostart":
+        sys.exit(cmd_autostart(args))
     if args.cmd == "stop":
         sys.exit(cmd_stop(args))
     if args.cmd == "doctor":

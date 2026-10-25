@@ -456,6 +456,16 @@ class MCPHub:
 
 async def run_stdio_mcp_server(hub: MCPHub, server_id: str | None = None) -> int:
     """Stdio transport loop for running any AgentGuard MCP server via CLI."""
+    if hasattr(sys.stdin, "reconfigure"):
+        try:
+            sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace", newline="\n")
+        except Exception:
+            pass
     for line in sys.stdin:
         raw = line.strip()
         if not raw:

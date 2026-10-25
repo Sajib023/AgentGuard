@@ -96,19 +96,30 @@ Nothing leaves your machine except the model calls your coding agents already ma
 
 ### Option A — One-Command Hardware-Verified Setup (Recommended)
 
+**Linux / macOS (Bash):**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Sajib023/AgentGuard/main/install.sh | bash
 ```
-
 *(Or from a local checkout: `./install.sh`)*
 
+**Windows 10/11 (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/Sajib023/AgentGuard/main/install.ps1 | iex
+```
+*(Or from a local checkout in PowerShell: `.\install.ps1`)*
+
+**Windows (Command Prompt / CMD):**
+```cmd
+install.cmd
+```
+
 The installer executes a strict **5-step hardware-verified flow**:
-1. **Hardware Compatibility Check (Pre-Flight):** Automatically inspects **CPU** (architecture, core count, 64-bit SIMD extensions), **RAM** (total and available memory), and **Free Storage** against the target AI model's requirements (`llama-guard3:1b` by default, or pass `--model <name>`).
+1. **Hardware Compatibility Check (Pre-Flight):** Automatically inspects **CPU** (architecture, core count, 64-bit SIMD extensions), **RAM** (total and available memory via Windows API / `/proc`), and **Free Storage** against the target AI model's requirements (`llama-guard3:1b` by default, or pass `--model <name>`).
 2. **Explicit User Permission & Lightweight Fallback:**
    - **If hardware is compatible:** Asks for explicit confirmation (`[y/N]`) before downloading Ollama, the AI model, and AgentGuard.
    - **If hardware is NOT compatible for the AI model:** Displays the exact failed requirement(s) (`detected vs. required`), refuses to download Ollama or the AI model, and asks (`[y/N]`) if you would like to install AgentGuard in **Lightweight Mode** (`llm_guard.enabled: false` — ~80 MB RAM, keeping Tiers 1–3.5 Firewall, Threat-RAG, GraphRAG, Circuit Breaker, MCP Hub, and Dashboard active) or exit gracefully.
-3. **Ollama & AI Model Installation (Full AI Mode):** Downloads and installs **Ollama** (if not already present) and pulls the required AI model (`llama-guard3:1b`).
-4. **AgentGuard & Auto-Boot Configuration:** Installs AgentGuard (`~/.agentguard`), configures `agentguard.yaml` and coding agent hooks (**OpenCode**, **Claude Code**, **Codex CLI**), installs **cloudflared** (if unavailable), and configures **Ollama** + **AgentGuard** (`systemd` service / `@reboot` fallback) to **start automatically whenever the device boots**.
+3. **Ollama & AI Model Installation (Full AI Mode):** Downloads and installs **Ollama** (via winget/installer or system package) and pulls the required AI model (`llama-guard3:1b`).
+4. **AgentGuard & Auto-Boot Configuration:** Installs AgentGuard (`~/.agentguard`), configures `agentguard.yaml` and coding agent hooks (**OpenCode**, **Claude Code**, **Codex CLI**), installs **cloudflared**, and configures **Ollama** + **AgentGuard** (Windows Task Scheduler / `systemd` user service / `@reboot` fallback) to **start automatically whenever the device boots**.
 5. **End-to-End Verification:** Verifies Ollama registry, runs a live model inference warmup (`keep_alive=24h`), verifies `http://127.0.0.1:8907/v1/healthz`, and prints the **public tunnel URL** (`https://<id>.trycloudflare.com`) and the **dashboard access code** for this launch.
 
 ### Option B — Manual / Step-by-Step Setup
