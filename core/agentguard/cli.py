@@ -555,10 +555,10 @@ def cmd_hwcheck(args: argparse.Namespace) -> int:
     return 1
 
 
-def cmd_doctor(_: argparse.Namespace) -> int:
+def cmd_doctor(args: argparse.Namespace) -> int:
     from .config import Config, default_db_path
 
-    cfg = Config.load()
+    cfg = Config.load(getattr(args, "config", None))
     print("AgentGuard doctor")
     print(f"  python:      {sys.version.split()[0]}")
     print(f"  db path:     {cfg.server.db_path or default_db_path()}")
@@ -802,8 +802,10 @@ def main() -> None:
     auto_p.add_argument("--port", type=int, help="service port baked into the launcher")
     auto_p.add_argument("--model", help="Ollama model to warm up at login (empty = skip)")
     auto_p.add_argument("--ollama", default="http://127.0.0.1:11434", help="Ollama endpoint for warm-up")
-    sub.add_parser("stop", help="stop a running service (pidfile)")
-    sub.add_parser("doctor", help="check environment (deps, ollama, db)")
+    stop_p = sub.add_parser("stop", help="stop a running service (pidfile)")
+    stop_p.add_argument("--config", help="YAML config path")
+    doctor_p = sub.add_parser("doctor", help="check environment (deps, ollama, db)")
+    doctor_p.add_argument("--config", help="YAML config path")
     sub.add_parser("version", help="print version")
     args = parser.parse_args()
     if args.cmd == "serve":
