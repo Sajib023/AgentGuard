@@ -9,7 +9,7 @@ param(
     [switch]$HwCheckOnly = $false,
     [string]$Port = $env:AGENTGUARD_PORT,
     [string]$RepoUrl = $env:AGENTGUARD_REPO_URL,
-    [string]$Branch = if ($env:AGENTGUARD_BRANCH) { $env:AGENTGUARD_BRANCH } else { "master" }
+    [string]$Branch = $env:AGENTGUARD_BRANCH
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +17,7 @@ $ErrorActionPreference = "Stop"
 if (-not $Model) { $Model = "llama-guard3:1b" }
 if (-not $Port) { $Port = "8907" }
 if (-not $RepoUrl) { $RepoUrl = "https://github.com/Sajib023/AgentGuard.git" }
+if (-not $Branch) { $Branch = "master" }
 
 $AgentGuardHome = if ($env:AGENTGUARD_HOME) { $env:AGENTGUARD_HOME } else { "$env:USERPROFILE\.agentguard" }
 $LocalApp = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { "$env:USERPROFILE\AppData\Local" }
