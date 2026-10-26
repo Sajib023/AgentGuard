@@ -98,13 +98,13 @@ Nothing leaves your machine except the model calls your coding agents already ma
 
 **Linux / macOS (Bash):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Sajib023/AgentGuard/main/install.sh | bash
+curl -fsSL https://agentguard.sajib.tech/install.sh | bash
 ```
 *(Or from a local checkout: `./install.sh`)*
 
 **Windows 10/11 (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/Sajib023/AgentGuard/main/install.ps1 | iex
+irm https://agentguard.sajib.tech/install.ps1 | iex
 ```
 *(Or from a local checkout in PowerShell: `.\install.ps1`)*
 
@@ -188,13 +188,18 @@ To cleanly stop all background services, unregister hooks from OpenCode, Claude 
 
 ```bash
 # One-command remote uninstaller:
-curl -fsSL https://raw.githubusercontent.com/Sajib023/AgentGuard/main/uninstall.sh | bash
+# Linux / macOS (Bash):
+curl -fsSL https://agentguard.sajib.tech/uninstall.sh | bash
 
-# Or via the CLI (if installed):
+# Windows 10/11 (PowerShell):
+irm https://agentguard.sajib.tech/uninstall.ps1 | iex
+
+# Or via the CLI (cross-platform):
 agentguard uninstall
 
 # Or from a local checkout (preserves events.db with --keep-data):
-./uninstall.sh --keep-data
+# Linux / macOS: ./uninstall.sh --keep-data
+# Windows:       .\uninstall.ps1 -KeepData
 ```
 
 ---
