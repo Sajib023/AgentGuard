@@ -1,0 +1,19 @@
+{
+  "id": "agentguard",
+  "name": "AgentGuard",
+  "description": "Local-first security firewall, circuit-breaker shield, and threat telemetry for every OpenClaw tool call (AgentGuard core at http://127.0.0.1:8907).",
+  "categories": ["other"],
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "url": { "type": "string", "description": "AgentGuard core base URL" },
+      "mode": { "type": "string", "enum": ["enforce", "observe"] },
+      "breaker": { "type": "boolean", "description": "Block tool calls when the circuit breaker is open" },
+      "approvalTimeoutMs": { "type": "integer", "description": "Timeout for provider approval prompts" }
+    }
+  }
+}

@@ -60,7 +60,7 @@ printf "\n${bold}🗑️  AgentGuard Uninstaller${reset}\n\n"
 if [[ "$ASSUME_YES" != "1" ]]; then
   printf "This will remove:\n"
   printf "  • AgentGuard background daemon & boot services (systemd / cron)\n"
-  printf "  • Agent hooks for OpenCode, Claude Code, and Codex CLI\n"
+  printf "  • Agent hooks for OpenCode, Claude Code, Codex CLI, Antigravity, and OpenClaw\n"
   printf "  • Global CLI wrapper (%s/agentguard)\n" "$BIN_DIR"
   if [[ "$KEEP_DATA" == "1" ]]; then
     printf "  • Application files in %s (preserving events.db)\n" "$AGENTGUARD_HOME"
@@ -110,7 +110,7 @@ fi
 ok "Services stopped and boot configuration removed"
 
 # 2. Unregister agent hooks cleanly
-info "Removing hooks from OpenCode, Claude Code, and Codex CLI..."
+info "Removing hooks from OpenCode, Claude Code, Codex CLI, Antigravity, and OpenClaw..."
 
 # OpenCode plugin
 OPENCODE_PLUGIN="${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins/agentguard"
@@ -193,6 +193,94 @@ except Exception:
 PY
   rm -f "$CODEX_HOME/hooks/agentguard_codex_hook.py"
   ok "Removed AgentGuard hooks from $CODEX_HOOKS"
+fi
+
+# Google Antigravity hooks
+ANTIGRAVITY_HOOKS="${ANTIGRAVITY_CONFIG_DIR:-$HOME/.gemini/config}/hooks.json"
+if [[ -f "$ANTIGRAVITY_HOOKS" ]] && command -v python3 >/dev/null 2>&1; then
+  python3 - "$ANTIGRAVITY_HOOKS" <<'PY'
+import json, pathlib, sys, re
+
+p = pathlib.Path(sys.argv[1])
+marker = "agentguard_antigravity_hook.py"
+
+def strip(node):
+    if isinstance(node, dict):
+        if isinstance(node.get("command"), str) and marker in node["command"]:
+            return None  # signal drop
+        if isinstance(node.get("hooks"), list):
+            kept = [h for h in (strip_rep(x) for x in node["hooks"]) if h is not None]
+            return {**node, "hooks": kept} if kept else None
+        return dict(node)
+    return node
+
+def strip_rep(node):
+    if isinstance(node, list):
+        out = []
+        for x in node:
+            v = strip_rep(x)
+            if v is not None:
+                out.append(v)
+        return out
+    return strip(node)
+
+try:
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    changed = False
+    if isinstance(doc, dict):
+        new_doc = {}
+        for set_name, events in doc.items():
+            if isinstance(events, dict):
+                new_events = {}
+                for ev_name, entries in events.items():
+                    if isinstance(entries, list):
+                        kept = [e for e in (strip_rep(e) for e in entries) if e is not None]
+                        if kept:
+                            new_events[ev_name] = kept
+                            if kept != entries:
+                                changed = True
+                        else:
+                            changed = True
+                    else:
+                        new_events[ev_name] = entries
+                if new_events:
+                    new_doc[set_name] = new_events
+            else:
+                new_doc[set_name] = events
+        if new_doc != doc:
+            changed = True
+            doc = new_doc
+    if changed and doc:
+        p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    elif changed and not doc:
+        p.write_text("{}\n", encoding="utf-8")
+except Exception:
+    pass
+PY
+  ok "Removed AgentGuard hooks from $ANTIGRAVITY_HOOKS"
+fi
+
+# OpenClaw plugin
+if command -v openclaw >/dev/null 2>&1; then
+  openclaw plugins remove agentguard >/dev/null 2>&1 \
+    || openclaw plugins uninstall agentguard >/dev/null 2>&1 \
+    || true
+  ok "Removed agentguard plugin from OpenClaw"
+fi
+OPENCLAW_CFG="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
+if [[ -f "$OPENCLAW_CFG" ]] && command -v python3 >/dev/null 2>&1; then
+  python3 - "$OPENCLAW_CFG" <<'PY'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+try:
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    entries = (doc or {}).get("plugins", {}).get("entries", {})
+    if isinstance(entries, dict) and "agentguard" in entries:
+        del entries["agentguard"]
+        p.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+except Exception:
+    pass
+PY
 fi
 
 # 3. Remove binary symlink / wrapper

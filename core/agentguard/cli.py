@@ -399,13 +399,221 @@ def _setup_codex(repo: Path) -> bool:
     return True
 
 
+def _antigravity_config_dir() -> Path:
+    return Path(
+        os.environ.get("ANTIGRAVITY_CONFIG_DIR") or (Path.home() / ".gemini" / "config")
+    ).expanduser()
+
+
+def _strip_antigravity_sets(doc: dict, marker: str) -> dict:
+    """Drop every handler referencing `marker` from an Antigravity hooks.json
+    (hook-set name -> event -> list of handlers or {matcher, hooks} groups),
+    removing hook-sets that empty out entirely."""
+    cleaned: dict = {}
+    for set_name, events in doc.items():
+        if not isinstance(events, dict):
+            cleaned[set_name] = events
+            continue
+        cleaned_events: dict = {}
+        for ev_name, entries in events.items():
+            if not isinstance(entries, list):
+                cleaned_events[ev_name] = entries
+                continue
+            kept: list = []
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    kept.append(entry)
+                    continue
+                if marker in str(entry.get("command", "")):
+                    continue  # direct handler entry
+                hooks = entry.get("hooks")
+                if isinstance(hooks, list):
+                    kept_hooks = [
+                        h for h in hooks
+                        if not (isinstance(h, dict) and marker in str(h.get("command", "")))
+                    ]
+                    if kept_hooks:
+                        e2 = dict(entry)
+                        e2["hooks"] = kept_hooks
+                        kept.append(e2)
+                    # whole group dropped when it holds only our handlers
+                else:
+                    kept.append(entry)
+            if kept:
+                cleaned_events[ev_name] = kept
+        if cleaned_events:
+            cleaned[set_name] = cleaned_events
+    return cleaned
+
+
+def _setup_antigravity(repo: Path) -> bool:
+    src = repo / "integrations" / "antigravity" / "hooks" / "agentguard_antigravity_hook.py"
+    cfg_dir = _antigravity_config_dir()
+    detected = (
+        cfg_dir.is_dir()
+        or (Path.home() / ".gemini").is_dir()
+        or shutil.which("agy") is not None
+        or shutil.which("antigravity") is not None
+    )
+    if not detected:
+        print(
+            "  [antigravity] skipped (Google Antigravity not detected; wire it later with"
+            " `agentguard setup --antigravity`)"
+        )
+        return False
+    if not src.is_file():
+        print(f"  [antigravity] skipped (missing {src})")
+        return False
+
+    hooks_dir = _agentguard_home() / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    dest_hook = hooks_dir / "agentguard_antigravity_hook.py"
+    shutil.copy2(src, dest_hook)
+    oscompat.make_executable(dest_hook)
+
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    hooks_json_path = cfg_dir / "hooks.json"
+    doc: dict = {}
+    if hooks_json_path.is_file():
+        try:
+            loaded = json.loads(hooks_json_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                doc = loaded
+        except Exception:
+            backup = hooks_json_path.with_suffix(".json.bak")
+            shutil.copy2(hooks_json_path, backup)
+            print(f"  [antigravity] backed up unreadable hooks.json -> {backup}")
+
+    doc = _strip_antigravity_sets(doc, "agentguard_antigravity_hook.py")
+    base = oscompat.hook_command(dest_hook)
+    doc["agentguard"] = {
+        "SessionStart": [{"type": "command", "command": f"{base} SessionStart", "timeout": 15}],
+        "Stop": [{"type": "command", "command": f"{base} Stop", "timeout": 15}],
+        "PreInvocation": [
+            {"type": "command", "command": f"{base} PreInvocation", "timeout": 15}
+        ],
+        "PostInvocation": [
+            {"type": "command", "command": f"{base} PostInvocation", "timeout": 15}
+        ],
+        "PreToolUse": [{
+            "matcher": "",
+            "hooks": [{"type": "command", "command": f"{base} PreToolUse", "timeout": 35}],
+        }],
+        "PostToolUse": [{
+            "matcher": "",
+            "hooks": [{"type": "command", "command": f"{base} PostToolUse", "timeout": 30}],
+        }],
+    }
+    hooks_json_path.parent.mkdir(parents=True, exist_ok=True)
+    hooks_json_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    print(
+        f"  [antigravity] installed hook -> {dest_hook}"
+        f" (merged into {hooks_json_path}; optional MCP wiring:"
+        " integrations/antigravity/install.sh --mcp)"
+    )
+    return True
+
+
+_OPENCLAW_ENTRY = {
+    "enabled": True,
+    "hooks": {"allowConversationAccess": True},
+    "config": {
+        "mode": os.environ.get("AGENTGUARD_MODE", "enforce"),
+        "url": os.environ.get("AGENTGUARD_URL", "http://127.0.0.1:8907"),
+    },
+}
+
+
+def _merge_openclaw_entry(openclaw_bin: str) -> Path:
+    """Merge plugins.entries.agentguard into openclaw.json (strict JSON only;
+    JSON5 configs get the manual snippet printed instead)."""
+    cfg_path = Path(
+        os.environ.get("OPENCLAW_CONFIG") or (Path.home() / ".openclaw" / "openclaw.json")
+    ).expanduser()
+    doc: dict = {}
+    if cfg_path.is_file():
+        try:
+            loaded = json.loads(cfg_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                doc = loaded
+        except Exception:
+            print(
+                f"  [openclaw]  manual step: add plugins.entries.agentguard"
+                f" = {_OPENCLAW_ENTRY} to {cfg_path}"
+            )
+            return cfg_path
+    entries: dict = {}
+    if isinstance(doc, dict):
+        plugins = doc.get("plugins")
+        if not isinstance(plugins, dict):
+            plugins = {}
+            doc["plugins"] = plugins
+        raw_entries = plugins.get("entries")
+        if not isinstance(raw_entries, dict):
+            raw_entries = {}
+            plugins["entries"] = raw_entries
+        entries = raw_entries
+    old = entries.get("agentguard")
+    if isinstance(old, dict):
+        merged = {**_OPENCLAW_ENTRY, **old}
+        merged["hooks"] = {**_OPENCLAW_ENTRY["hooks"], **(old.get("hooks") or {})}
+        merged["config"] = {**_OPENCLAW_ENTRY["config"], **(old.get("config") or {})}
+        entries["agentguard"] = merged
+    else:
+        entries["agentguard"] = json.loads(json.dumps(_OPENCLAW_ENTRY))
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    cfg_path.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+    return cfg_path
+
+
+def _setup_openclaw(repo: Path) -> bool:
+    plugin_dir = repo / "integrations" / "openclaw"
+    if not (plugin_dir / "openclaw.plugin.json").is_file():
+        print(f"  [openclaw]  skipped (missing {plugin_dir / 'openclaw.plugin.json'})")
+        return False
+    openclaw_bin = shutil.which("openclaw")
+    if not openclaw_bin:
+        print(
+            "  [openclaw]  skipped (openclaw CLI not found; wire it later with"
+            " `agentguard setup --openclaw` or integrations/openclaw/install.sh)"
+        )
+        return False
+
+    linked = True
+    steps = (
+        ["plugins", "install", "--link", str(plugin_dir), "--force"],
+        ["plugins", "enable", "agentguard"],
+        ["plugins", "reload", "agentguard"],
+    )
+    for step in steps:
+        try:
+            proc = subprocess.run([openclaw_bin, *step], capture_output=True, text=True, check=False)
+            if proc.returncode != 0 and step[1] != "reload":
+                linked = False
+        except Exception:
+            linked = False
+
+    cfg_path = _merge_openclaw_entry(openclaw_bin)
+    if linked:
+        print(f"  [openclaw]  linked plugin -> {plugin_dir} (entries merged into {cfg_path})")
+    else:
+        print(
+            f"  [openclaw]  partially wired — the Gateway may be offline;"
+            f" finish with `openclaw plugins install --link {plugin_dir} --force`"
+            " and `openclaw plugins reload agentguard`"
+        )
+    return linked
+
+
 def cmd_setup(args: argparse.Namespace) -> int:
     repo = _repo_root()
     print(f"AgentGuard setup (repo: {repo})")
-    any_selected = args.opencode or args.claude or args.codex
+    any_selected = args.opencode or args.claude or args.codex or args.antigravity or args.openclaw
     do_opencode = args.opencode or not any_selected
     do_claude = args.claude or not any_selected
     do_codex = args.codex or not any_selected
+    do_antigravity = args.antigravity or not any_selected
+    do_openclaw = args.openclaw or not any_selected
 
     if do_opencode:
         _setup_opencode(repo)
@@ -413,6 +621,10 @@ def cmd_setup(args: argparse.Namespace) -> int:
         _setup_claude(repo)
     if do_codex:
         _setup_codex(repo)
+    if do_antigravity:
+        _setup_antigravity(repo)
+    if do_openclaw:
+        _setup_openclaw(repo)
 
     if args.pull_model:
         ollama_bin = shutil.which("ollama")
@@ -666,6 +878,46 @@ def _unsetup_hooks() -> None:
     if hook_file.is_file():
         hook_file.unlink(missing_ok=True)
 
+    # 4. Google Antigravity
+    antigravity_hooks = _antigravity_config_dir() / "hooks.json"
+    if antigravity_hooks.is_file():
+        try:
+            doc = json.loads(antigravity_hooks.read_text(encoding="utf-8"))
+            if isinstance(doc, dict):
+                cleaned_doc = _strip_antigravity_sets(doc, "agentguard_antigravity_hook.py")
+                if cleaned_doc != doc:
+                    antigravity_hooks.write_text(
+                        json.dumps(cleaned_doc, indent=2) + "\n", encoding="utf-8"
+                    )
+                    print(f"  [antigravity] unregistered hooks from {antigravity_hooks}")
+        except Exception:
+            pass
+
+    # 5. OpenClaw
+    openclaw_bin = shutil.which("openclaw")
+    if openclaw_bin:
+        try:
+            subprocess.run(
+                [openclaw_bin, "plugins", "remove", "agentguard"],
+                capture_output=True, text=True, check=False,
+            )
+            print("  [openclaw]  removed agentguard plugin")
+        except Exception:
+            pass
+    openclaw_cfg = Path(
+        os.environ.get("OPENCLAW_CONFIG") or (Path.home() / ".openclaw" / "openclaw.json")
+    ).expanduser()
+    if openclaw_cfg.is_file():
+        try:
+            doc = json.loads(openclaw_cfg.read_text(encoding="utf-8"))
+            entries = (doc or {}).get("plugins", {}).get("entries", {})
+            if isinstance(entries, dict) and "agentguard" in entries:
+                del entries["agentguard"]
+                openclaw_cfg.write_text(json.dumps(doc, indent=2) + "\n", encoding="utf-8")
+                print(f"  [openclaw]  removed agentguard entry from {openclaw_cfg}")
+        except Exception:
+            pass
+
 
 def cmd_uninstall(args: argparse.Namespace) -> int:
     if not getattr(args, "yes", False):
@@ -769,11 +1021,18 @@ def main() -> None:
     serve.add_argument("--no-tunnel", action="store_true", help="disable the Cloudflare Quick Tunnel (local only)")
     serve.add_argument("--no-auth", action="store_true", help="disable dashboard access-code auth (NOT recommended with --tunnel)")
 
-    setup_p = sub.add_parser("setup", help="auto-configure OpenCode, Claude Code, and Codex CLI hooks")
+    setup_p = sub.add_parser(
+        "setup",
+        help="auto-configure OpenCode, Claude Code, Codex CLI, Antigravity, and OpenClaw hooks",
+    )
     setup_p.add_argument("--config", help="YAML config path")
     setup_p.add_argument("--opencode", action="store_true", help="install OpenCode plugin only")
     setup_p.add_argument("--claude", action="store_true", help="install Claude Code hooks only")
     setup_p.add_argument("--codex", action="store_true", help="install Codex CLI hooks only")
+    setup_p.add_argument(
+        "--antigravity", action="store_true", help="install Antigravity lifecycle hooks only"
+    )
+    setup_p.add_argument("--openclaw", action="store_true", help="install OpenClaw plugin only")
     setup_p.add_argument("--pull-model", action="store_true", help="pull local llama-guard3:1b via Ollama if installed")
     setup_p.add_argument("--start", action="store_true", help="start AgentGuard daemon after setup")
 

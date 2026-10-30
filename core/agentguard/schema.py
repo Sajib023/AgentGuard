@@ -21,6 +21,8 @@ class AgentKind(str, Enum):
     claude_code = "claude_code"
     codex = "codex"
     langgraph = "langgraph"
+    antigravity = "antigravity"
+    openclaw = "openclaw"
     generic = "generic"
 
 

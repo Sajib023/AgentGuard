@@ -18,6 +18,8 @@ flowchart TB
         OC["OpenCode Plugin (prompt + tool.execute hooks)"]
         CC["Claude Code Hook (PreToolUse / PostToolUse)"]
         CX["Codex CLI Hook (SessionStart / PreToolUse / UserPromptSubmit)"]
+        AG["Antigravity Hook (SessionStart / PreToolUse / PreInvocation / Stop)"]
+        OCL["OpenClaw Plugin (before_tool_call / before_agent_run / session_end)"]
         LG["LangGraph Callback (AgentGuardLangGraphHandler)"]
         MCPC["MCP Clients & IDEs (stdio / SSE / Streamable HTTP)"]
     end
@@ -80,7 +82,7 @@ flowchart TB
         PUB["https://<id>.trycloudflare.com + Random Access Code (/login, HttpOnly session)"]
     end
 
-    OC & CC & CX & LG --> API
+    OC & CC & CX & AG & LG & OCL --> API
     MCPC <--> MCP
     Core <--> DB
     T4 & RAG -.-> OLLAMA
@@ -477,6 +479,23 @@ stateDiagram-v2
 | **Claude Code** | `integrations/claude/hooks/agentguard_hook.py` | `agentguard setup` or `integrations/claude/install.sh` (auto-merges `~/.claude/settings.json`) | `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`, `SessionEnd` hooks; full firewall + approval hold + breaker shield. |
 | **Codex CLI** | `integrations/codex/hooks/agentguard_codex_hook.py` | `agentguard setup` or `integrations/codex/install.sh` (auto-merges `~/.codex/hooks.json`) | Full lifecycle hooks (`SessionStart`, `UserPromptSubmit`, `PreToolUse` with `updatedInput` secret redaction rewrite, `PostToolUse`, `PermissionRequest`, `SessionEnd`) + per-project `cwd` tracking. |
 | **LangGraph** | `core/agentguard/adapters/langgraph.py` | `from agentguard.adapters.langgraph import AgentGuardLangGraphHandler` | LangChain/LangGraph callback handler streaming graph node transitions, LLM token usage, tool calls, and errors. |
+| **Google Antigravity** (App / CLI / IDE) | `integrations/antigravity/hooks/agentguard_antigravity_hook.py` | `integrations/antigravity/install.sh` (auto-merges `~/.gemini/config/hooks.json`) | Full lifecycle hooks (`SessionStart`, `PreToolUse` with native `overwrite` argument redaction rewrite, `PostToolUse`, `PreInvocation` iteration telemetry, `Stop`); full firewall + breaker shield + breaker-open `deny`; optional MCP wiring via `mcp_config.json` (`~/.gemini/config/`). |
+| **OpenClaw** | `integrations/openclaw/` (plugin, `id: agentguard`) | `integrations/openclaw/install.sh` (links the plugin, enables it, merges `plugins.entries.agentguard`) | Typed plugin hooks: `before_tool_call` gate (block / native `params` rewrite for sanitize / `requireApproval` via OpenClaw's approval UI), `after_tool_call` result telemetry, `before_agent_run` admission gate + breaker shield + prompt check, `session_end`. Requires `plugins.entries.agentguard.hooks.allowConversationAccess: true` for conversation hooks (installer sets it). |
+
+**Antigravity verdict mapping** (`AgentGuard action` → `Antigravity decision`):
+`allow → allow`, `sanitize → allow + overwrite` (redacted args are genuinely
+rewritten back into the tool call; falls back to `force_ask` when redaction no
+longer round-trips), `approve → force_ask`, `block → deny`. Circuit-breaker
+breaches deny everything except AgentGuard self-management commands.
+
+**OpenClaw caveats:** OpenClaw plugin APIs are experimental — the plugin pins
+ a host baseline (`pluginApi >= 2026.3.24-beta.2`) and every handler is
+ fail-open. Coding-agent runs fronted through ACP/Codex harnesses inside
+ OpenClaw have narrower hook boundaries there (parameter rewrites are
+ rejected); for Codex CLI sessions scheduled directly, AgentGuard's native
+ Codex CLI integration above remains the authoritative gate.
+
+---
 
 ---
 

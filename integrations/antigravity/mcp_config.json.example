@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "agentguard-firewall": {
+      "command": "~/.agentguard/venv/bin/agentguard",
+      "args": ["mcp", "--server", "agentguard-firewall-mcp"],
+      "timeoutSeconds": 120
+    },
+    "agentguard-breaker": {
+      "command": "~/.agentguard/venv/bin/agentguard",
+      "args": ["mcp", "--server", "agentguard-breaker-mcp"],
+      "timeoutSeconds": 120,
+      "disabledTools": ["reset_circuit_breaker"]
+    },
+    "agentguard-lineage": {
+      "serverUrl": "http://127.0.0.1:8907/v1/mcp/rpc",
+      "timeoutSeconds": 120
+    }
+  }
+}

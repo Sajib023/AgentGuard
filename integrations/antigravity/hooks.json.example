@@ -1,0 +1,32 @@
+{
+  "agentguard": {
+    "SessionStart": [
+      { "type": "command", "command": "python3 ~/.agentguard/hooks/agentguard_antigravity_hook.py SessionStart", "timeout": 15 }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "python3 ~/.agentguard/hooks/agentguard_antigravity_hook.py PreToolUse", "timeout": 35 }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          { "type": "command", "command": "python3 ~/.agentguard/hooks/agentguard_antigravity_hook.py PostToolUse", "timeout": 30 }
+        ]
+      }
+    ],
+    "PreInvocation": [
+      { "type": "command", "command": "python3 ~/.agentguard/hooks/agentguard_antigravity_hook.py PreInvocation", "timeout": 15 }
+    ],
+    "PostInvocation": [
+      { "type": "command", "command": "python3 ~/.agentguard/hooks/agentguard_antigravity_hook.py PostInvocation", "timeout": 15 }
+    ],
+    "Stop": [
+      { "type": "command", "command": "python3 ~/.agentguard/hooks/agentguard_antigravity_hook.py Stop", "timeout": 15 }
+    ]
+  }
+}

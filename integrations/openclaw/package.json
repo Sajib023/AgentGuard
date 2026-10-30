@@ -1,0 +1,16 @@
+{
+  "name": "agentguard-openclaw",
+  "version": "0.1.0",
+  "description": "AgentGuard for OpenClaw: local-first security firewall, circuit-breaker shield, and threat telemetry for every tool call",
+  "type": "module",
+  "openclaw": {
+    "extensions": ["./index.ts"],
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2",
+      "minGatewayVersion": "2026.3.24-beta.2"
+    }
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.3.24-beta.2"
+  }
+}

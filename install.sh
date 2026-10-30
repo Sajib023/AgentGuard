@@ -321,7 +321,7 @@ else
   printf "\n${bold}Planned Installation & System Actions (Full AI Mode):${reset}\n"
   printf "  1. Download and install ${bold}Ollama${reset} (if not already installed)\n"
   printf "  2. Download AI model ${bold}%s${reset} via Ollama\n" "$AGENTGUARD_MODEL"
-  printf "  3. Install & configure ${bold}AgentGuard${reset} in %s (+ OpenCode, Claude Code, Codex hooks)\n" "$AGENTGUARD_HOME"
+  printf "  3. Install & configure ${bold}AgentGuard${reset} in %s (+ OpenCode, Claude Code, Codex hooks; Antigravity & OpenClaw when detected)\n" "$AGENTGUARD_HOME"
   printf "  4. Configure ${bold}Ollama${reset} and ${bold}AgentGuard${reset} to start automatically on device boot\n"
   printf "  5. Verify Ollama, model inference, and AgentGuard firewall readiness\n\n"
 
@@ -584,7 +584,7 @@ EOF
 chmod +x "$WRAPPER"
 ok "CLI linked at $WRAPPER"
 
-info "Configuring coding agent integrations (OpenCode, Claude Code, Codex CLI)..."
+info "Configuring coding agent integrations (OpenCode, Claude Code, Codex CLI; Antigravity & OpenClaw when detected)..."
 "$WRAPPER" setup
 ok "Agent hooks wired"
 
