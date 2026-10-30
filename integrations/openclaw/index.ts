@@ -19,7 +19,11 @@
  *                          block    -> { block: true, blockReason }
  *   after_tool_call   -> tool_call result telemetry ( breaker loop stats)
  *   before_agent_run  -> run admission gate: breaker shield + prompt-level
- *                        firewall check; session/llm_call telemetry
+ *                        firewall check; session tracking
+ *   model_call_ended  -> llm_call telemetry (token/cost ledger + iteration
+ *                        budget): one llm_call per actual model call with
+ *                        usage extracted from the event (shapes vary across
+ *                        providers — camelCase, snake_case, provider counts)
  *   session_end       -> session_end event (breaker session finalization)
  *
  * Configure in ~/.openclaw/openclaw.json (see install.sh):
@@ -260,9 +264,9 @@ export default definePluginEntry({
           };
         }
 
-        await emit(sid, "llm_call", {
-          model: event?.model ?? undefined,
-        });
+        // Note: llm_call telemetry is emitted from model_call_ended (one event
+        // per actual model call, carrying usage) — not here, which would
+        // double-count runs vs calls.
 
         // Prompt-level gate: only when the event carries the prepared prompt
         // text and the runtime exposes it.
@@ -298,6 +302,100 @@ export default definePluginEntry({
         await emit(sid, "session_end", {});
       } catch {
         /* ignore */
+      }
+    });
+
+    // Token & cost ledger: one llm_call event per actual model call. Event
+    // shapes vary across providers and OpenClaw versions, so extraction is
+    // permissive (camelCase, snake_case, provider-style counts, nested
+    // usage/tokens objects) and silently skips when nothing usable exists.
+    const num = (v: unknown): number | undefined => {
+      const n = typeof v === "string" ? Number(v) : (v as number);
+      return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : undefined;
+    };
+
+    // Cache counts sometimes nest one level under the usage dict (e.g.
+    // OpenAI-style prompt_tokens_details.cached_tokens) — probe child dicts.
+    const CACHE_READ_KEYS = [
+      "cache_read", "cache_read_tokens", "cacheReadTokens", "cached_tokens",
+      "cachedContentTokenCount", "cache_read_input_tokens",
+    ];
+    const CACHE_WRITE_KEYS = [
+      "cache_write", "cache_write_tokens", "cacheWriteTokens",
+      "cache_creation_tokens", "cache_creation_input_tokens",
+    ];
+
+    function probeNestedCache(node: AnyDict, keys: string[]): number {
+      for (const key of Object.keys(node).slice(0, 32)) {
+        const child = node[key];
+        if (child && typeof child === "object" && !Array.isArray(child)) {
+          for (const k of keys) {
+            const v = num(child[k]);
+            if (v !== undefined) return Math.round(v);
+          }
+        }
+      }
+      return 0;
+    }
+
+    function extractUsage(node: any, depth = 0): AnyDict | undefined {
+      if (!node || typeof node !== "object" || depth > 6) return undefined;
+      const input =
+        num(node.input) ?? num(node.input_tokens) ?? num(node.inputTokens) ??
+        num(node.prompt_tokens) ?? num(node.promptTokens) ?? num(node.promptTokenCount) ??
+        num(node.messages_input_tokens) ?? num(node.text_input_tokens);
+      const output =
+        num(node.output) ?? num(node.output_tokens) ?? num(node.outputTokens) ??
+        num(node.completion_tokens) ?? num(node.completionTokens) ?? num(node.candidatesTokenCount);
+      if ((input ?? 0) + (output ?? 0) > 0) {
+        return {
+          input_tokens: Math.round(input ?? 0),
+          output_tokens: Math.round(output ?? 0),
+          cache_read_tokens:
+            Math.round(
+              num(node.cache_read) ?? num(node.cache_read_tokens) ?? num(node.cacheReadTokens) ??
+              num(node.cached_tokens) ?? num(node.cachedContentTokenCount) ?? 0,
+            ) || probeNestedCache(node, CACHE_READ_KEYS),
+          cache_write_tokens:
+            Math.round(
+              num(node.cache_write) ?? num(node.cache_write_tokens) ?? num(node.cacheWriteTokens) ??
+              num(node.cache_creation_tokens) ?? num(node.cache_creation_input_tokens) ?? 0,
+            ) || probeNestedCache(node, CACHE_WRITE_KEYS),
+          cost_usd: num(node.cost) ?? num(node.costUsd) ?? num(node.cost_usd),
+          // provider-side extras ride along when present (breaker summaries)
+          duration_ms: num(node.durationMs) ?? num(node.duration_ms) ??
+            num(node.latencyMs) ?? num(node.elapsedMs),
+        };
+      }
+      for (const key of Object.keys(node)) {
+        const child = node[key];
+        if (child && typeof child === "object") {
+          const found = extractUsage(child, depth + 1);
+          if (found) return found;
+        }
+      }
+      return undefined;
+    }
+
+    api.on("model_call_ended", async (event: any, ctx: any) => {
+      try {
+        const sid = sessionIdOf(ctx);
+        const usage = extractUsage(event);
+        if (!usage) return undefined; // no usage disclosed: do not emit a wrong event
+        const model =
+          (typeof event?.model === "string" && event.model) ||
+          (typeof event?.modelRef === "string" && event.modelRef) ||
+          (typeof event?.modelId === "string" && event.modelId) ||
+          (typeof ctx?.model === "string" && ctx.model) ||
+          undefined;
+        await emit(sid, "llm_call", {
+          ...usage,
+          model,
+          run_id: typeof event?.runId === "string" ? event.runId : undefined,
+        });
+        return undefined;
+      } catch {
+        return undefined;
       }
     });
   },

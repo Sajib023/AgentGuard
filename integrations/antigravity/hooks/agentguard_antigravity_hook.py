@@ -11,10 +11,11 @@ gates Antigravity exposes:
                       with Antigravity's decision contract
                       (allow / ask / force_ask / deny, optional `overwrite`)
     PostToolUse    -> tool_call result event
-    PreInvocation  -> llm_call telemetry (iteration budgeting); optional
+    PreInvocation  -> llm_call telemetry (iteration budgeting + token usage
+                      mined from the conversation transcript delta); optional
                       prompt check when the payload carries prompt text
     PostInvocation -> no-op (present for completeness)
-    Stop           -> session_end
+    Stop           -> flushes remaining transcript usage, then session_end
 
 Wiring (hooks.json — global ~/.gemini/config/hooks.json or per-workspace
 .agents/hooks.json; see ../hooks.json.example):
@@ -43,6 +44,14 @@ Environment:
                           everything but never blocks
     AGENTGUARD_BREAKER    set to "0" to skip the breaker shield on tools
 
+Token telemetry: Antigravity payloads carry no model usage, but usage records
+land in the conversation transcript JSONL between invocations. Before each
+PreInvocation / Stop the adapter reads only the region past a per-conversation
+cursor (state file ~/.agentguard/hooks/.usage_state/<sha1>.json) and folds the
+new records into that invocation's single llm_call event — usage of call N-1
+arrives with invocation N; Stop flushes the remainder. Parsing is fail-open
+and best-effort: unrecognized shapes simply emit a bare llm_call.
+
 Design note — fail-open: when the local service is unreachable the hook always
 allows. Antigravity hook timeouts (default 30 s) are honored from hooks.json.
 """
@@ -55,6 +64,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 URL = os.environ.get("AGENTGUARD_URL", "http://127.0.0.1:8907").rstrip("/")
 ENFORCE = os.environ.get("AGENTGUARD_MODE", "enforce") == "enforce"
@@ -252,12 +262,166 @@ def on_post_tool(ev: dict) -> None:
     print(json.dumps({}))
 
 
+# ----------------------------------------------------------------------------
+# Token usage mining from the conversation transcript. Hook payloads expose no
+# usage; model call usage lands in the transcript JSONL between invocations, so
+# each PreInvocation consumes the delta since the previous scan (cursor kept in
+# ~/.agentguard/hooks/.usage_state/) and Stop flushes the remainder.
+# ----------------------------------------------------------------------------
+
+INPUT_KEYS = ("promptTokenCount", "prompt_tokens", "input_tokens", "inputTokens")
+OUTPUT_KEYS = ("candidatesTokenCount", "completion_tokens", "output_tokens",
+               "outputTokens")
+CACHE_READ_KEYS = ("cachedContentTokenCount", "cached_tokens", "cache_read_tokens",
+                   "cacheReadTokens", "cache_read_input_tokens")
+CACHE_WRITE_KEYS = ("cache_creation_input_tokens", "cache_creation_tokens",
+                    "cacheWriteTokens", "cache_write_tokens")
+_SCAN_CAP_BYTES = 16 * 1024 * 1024  # read at most this much per invocation
+
+
+def _first_int(d: dict, *keys: str) -> int | None:
+    for k in keys:
+        v = d.get(k)
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)) and v >= 0:
+            return int(v)
+        if isinstance(v, str) and v.strip().isdigit():
+            return int(v.strip())
+    return None
+
+
+def _cache_probe(d: dict, keys: tuple) -> int | None:
+    """Cache counts sometimes nest one level under the usage dict (e.g.
+    OpenAI-style prompt_tokens_details.cached_tokens)."""
+    v = _first_int(d, *keys)
+    if v is not None:
+        return v
+    for k in list(d)[:32]:
+        child = d[k]
+        if isinstance(child, dict):
+            v = _first_int(child, *keys)
+            if v is not None:
+                return v
+    return None
+
+
+def _find_usage(node: object, depth: int = 0) -> dict | None:
+    """Bounded DFS for the first dict carrying recognizable token counts."""
+    if depth > 8 or not isinstance(node, (dict, list)):
+        return None
+    if isinstance(node, dict):
+        input_ = _first_int(node, *INPUT_KEYS)
+        output_ = _first_int(node, *OUTPUT_KEYS)
+        if input_ is not None or output_ is not None:
+            return {
+                "input": input_ or 0,
+                "output": output_ or 0,
+                "cache_read": _cache_probe(node, CACHE_READ_KEYS) or 0,
+                "cache_write": _cache_probe(node, CACHE_WRITE_KEYS) or 0,
+            }
+        children = [node[k] for k in list(node)[:64]]
+    else:
+        children = list(node)[:64]
+    for child in children:
+        found = _find_usage(child, depth + 1)
+        if found:
+            return found
+    return None
+
+
+def _usage_state_file(path: str, sid: str) -> Path | None:
+    base = os.environ.get("AGENTGUARD_HOME") or os.path.join(
+        os.path.expanduser("~"), ".agentguard")
+    d = Path(base) / "hooks" / ".usage_state"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        return None  # cursor persistence unavailable: mining would recount
+    return d / (hashlib.sha1(f"{path}|{sid}".encode()).hexdigest() + ".json")
+
+
+def _scan_usage_delta(ev: dict) -> dict:
+    """Sum usage records appended to the transcript past the stored cursor and
+    advance it (rotation/truncation resets the cursor; an unterminated trailing
+    line is left for the next scan so records are consumed exactly once)."""
+    out = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "found": 0}
+    path = ev.get("transcriptPath") or ev.get("transcript_path")
+    if not isinstance(path, str) or not path:
+        return out
+    path = os.path.expanduser(path)  # Antigravity sends a literal '~' prefix
+    state = _usage_state_file(path, _session_id(ev))
+    if state is None:
+        return out
+    offset = 0
+    try:
+        offset = int(json.loads(state.read_text(encoding="utf-8")).get("offset", 0))
+    except Exception:
+        offset = 0
+    try:
+        fsize = os.path.getsize(path)
+        if fsize < offset:
+            offset = 0  # transcript rotated / truncated
+        if fsize <= offset:
+            return out
+        consumed = 0
+        with open(path, "rb") as fh:
+            fh.seek(offset)
+            for raw in fh:
+                if consumed + len(raw) > _SCAN_CAP_BYTES:
+                    break  # resume from current point on the next scan
+                if not raw.endswith(b"\n"):
+                    break  # unterminated tail (transcript mid-write)
+                consumed += len(raw)
+                low = raw.lower()
+                if (b"usage" not in low and b"tokencount" not in low
+                        and b"token_count" not in low):
+                    continue  # cheap prefilter: line cannot carry usage
+                if len(raw) > 1_000_000:
+                    continue
+                try:
+                    rec = _find_usage(json.loads(raw))
+                except Exception:
+                    continue  # skip malformed / non-JSON lines
+                if rec:
+                    out["input"] += rec["input"]
+                    out["output"] += rec["output"]
+                    out["cache_read"] += rec["cache_read"]
+                    out["cache_write"] += rec["cache_write"]
+                    out["found"] += 1
+        new_offset = offset + consumed
+        if new_offset != offset:
+            try:
+                state.write_text(json.dumps({"offset": new_offset}), encoding="utf-8")
+            except OSError:
+                pass
+    except OSError:
+        return out
+    return out
+
+
+def _usage_event_data(usage: dict) -> dict:
+    data = {
+        "input_tokens": usage["input"],
+        "output_tokens": usage["output"],
+        "cache_read_tokens": usage["cache_read"],
+    }
+    if usage["cache_write"]:
+        data["cache_write_tokens"] = usage["cache_write"]
+    return data
+
+
 def on_pre_invocation(ev: dict) -> None:
     sid = _session_id(ev)
     model = ev.get("modelName")
-    data = {"iteration": ev.get("invocationNum")}
+    data: dict = {"iteration": ev.get("invocationNum")}
     if model:
         data["model"] = model
+    usage = _scan_usage_delta(ev)
+    if usage["found"]:
+        # Usage records from model call N-1 land between invocations; fold
+        # them into this invocation's single llm_call event.
+        data.update(_usage_event_data(usage))
     _post("/v1/events", {"events": [{
         "agent": "antigravity", "session_id": sid, "type": "llm_call",
         "data": data,
@@ -279,8 +443,15 @@ def on_post_invocation(ev: dict) -> None:
 
 
 def on_stop(ev: dict) -> None:
+    sid = _session_id(ev)
+    usage = _scan_usage_delta(ev)  # flush whatever the last invocation missed
+    if usage["found"]:
+        _post("/v1/events", {"events": [{
+            "agent": "antigravity", "session_id": sid, "type": "llm_call",
+            "data": _usage_event_data(usage),
+        }]})
     _post("/v1/events", {"events": [{
-        "agent": "antigravity", "session_id": _session_id(ev),
+        "agent": "antigravity", "session_id": sid,
         "type": "session_end", "data": {
             "reason": ev.get("terminationReason") or "",
         },
