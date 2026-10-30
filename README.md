@@ -503,7 +503,11 @@ and folds it into that invocation's single `llm_call`; `Stop` flushes the tail.
 OpenClaw reports usage on the `model_call_ended` event instead, emitting exactly
 one `llm_call` per model call. Both are best-effort and fail-open: usage shapes
 the adapters don't recognize yield bare `llm_call` events (iteration/call
-counting still works; the token/cost ledger may undercount).
+counting still works; the token/cost ledger may undercount). Set
+`AGENTGUARD_HOOK_DEBUG=1` in the agent environment to trace what the
+Antigravity hook scanned — it appends what it saw (payload keys, transcript
+path/size/cursor, matched usage shapes) to
+`~/.agentguard/hooks/antigravity_hook_debug.log`.
 
 ---
 

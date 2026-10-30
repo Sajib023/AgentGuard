@@ -62,6 +62,7 @@ import hashlib
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -122,6 +123,27 @@ def _digest(text: str) -> str:
     return f"{h}{len(text):x}"
 
 
+DEBUG_LOG = os.environ.get("AGENTGUARD_HOOK_DEBUG") == "1"
+
+
+def _dbg(event_name: str, fields: dict) -> None:
+    """Local-only trace of what the hook saw, appended to
+    ~/.agentguard/hooks/antigravity_hook_debug.log when
+    AGENTGUARD_HOOK_DEBUG=1. Never enabled by default."""
+    if not DEBUG_LOG:
+        return
+    home = os.environ.get("AGENTGUARD_HOME") or os.path.join(
+        os.path.expanduser("~"), ".agentguard")
+    path = Path(home) / "hooks" / "antigravity_hook_debug.log"
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "event": event_name, **fields}
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, default=str) + "\n")
+    except Exception:
+        pass
+
+
 def _session_id(ev: dict) -> str:
     return (ev.get("conversationId")
             or ev.get("conversation_id")
@@ -145,6 +167,9 @@ def _register(ev: dict) -> None:
 
 
 def on_session_start(ev: dict) -> None:
+    _dbg("session_start", {"payload_keys": sorted(str(k) for k in ev.keys())[:24],
+                           "transcriptPath": ev.get("transcriptPath"),
+                           "artifactDirectoryPath": ev.get("artifactDirectoryPath")})
     _register(ev)
     print(json.dumps({}))  # hooks may optionally injectSteps; none needed
 
@@ -269,11 +294,13 @@ def on_post_tool(ev: dict) -> None:
 # ~/.agentguard/hooks/.usage_state/) and Stop flushes the remainder.
 # ----------------------------------------------------------------------------
 
-INPUT_KEYS = ("promptTokenCount", "prompt_tokens", "input_tokens", "inputTokens")
-OUTPUT_KEYS = ("candidatesTokenCount", "completion_tokens", "output_tokens",
-               "outputTokens")
-CACHE_READ_KEYS = ("cachedContentTokenCount", "cached_tokens", "cache_read_tokens",
-                   "cacheReadTokens", "cache_read_input_tokens")
+INPUT_KEYS = ("promptTokenCount", "prompt_token_count", "prompt_tokens",
+              "input_tokens", "inputTokens", "messages_input_tokens",
+              "text_input_tokens")
+OUTPUT_KEYS = ("candidatesTokenCount", "candidates_token_count",
+               "completion_tokens", "output_tokens", "outputTokens")
+CACHE_READ_KEYS = ("cachedContentTokenCount", "cached_tokens", "cachedTokens",
+                   "cache_read_tokens", "cacheReadTokens", "cache_read_input_tokens")
 CACHE_WRITE_KEYS = ("cache_creation_input_tokens", "cache_creation_tokens",
                     "cacheWriteTokens", "cache_write_tokens")
 _SCAN_CAP_BYTES = 16 * 1024 * 1024  # read at most this much per invocation
@@ -306,28 +333,35 @@ def _cache_probe(d: dict, keys: tuple) -> int | None:
     return None
 
 
-def _find_usage(node: object, depth: int = 0) -> dict | None:
-    """Bounded DFS for the first dict carrying recognizable token counts."""
+def _find_usage(node: object, depth: int = 0):
+    """Bounded DFS for the first dict carrying recognizable token counts.
+    Returns (record, snippet) or (None, None); snippet shows the matched
+    usage dict's keys/shape for AGENTGUARD_HOOK_DEBUG=1 tracing."""
     if depth > 8 or not isinstance(node, (dict, list)):
-        return None
+        return None, None
     if isinstance(node, dict):
         input_ = _first_int(node, *INPUT_KEYS)
         output_ = _first_int(node, *OUTPUT_KEYS)
         if input_ is not None or output_ is not None:
-            return {
+            rec = {
                 "input": input_ or 0,
                 "output": output_ or 0,
                 "cache_read": _cache_probe(node, CACHE_READ_KEYS) or 0,
                 "cache_write": _cache_probe(node, CACHE_WRITE_KEYS) or 0,
             }
+            try:
+                snippet = json.dumps(node, default=str)[:300]
+            except Exception:
+                snippet = "<unserializable>"
+            return rec, snippet
         children = [node[k] for k in list(node)[:64]]
     else:
         children = list(node)[:64]
     for child in children:
-        found = _find_usage(child, depth + 1)
-        if found:
-            return found
-    return None
+        rec, snippet = _find_usage(child, depth + 1)
+        if rec:
+            return rec, snippet
+    return None, None
 
 
 def _usage_state_file(path: str, sid: str) -> Path | None:
@@ -345,43 +379,64 @@ def _scan_usage_delta(ev: dict) -> dict:
     """Sum usage records appended to the transcript past the stored cursor and
     advance it (rotation/truncation resets the cursor; an unterminated trailing
     line is left for the next scan so records are consumed exactly once)."""
-    out = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "found": 0}
+    out = {"input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "found": 0,
+           "snippet": None}
+    dbg: dict = {}
     path = ev.get("transcriptPath") or ev.get("transcript_path")
     if not isinstance(path, str) or not path:
+        _dbg("transcript_scan", {"note": "payload carries no transcript path",
+                                 "payload_keys": sorted(str(k) for k in ev.keys())[:24]})
         return out
+    dbg["path_raw"] = path
     path = os.path.expanduser(path)  # Antigravity sends a literal '~' prefix
     state = _usage_state_file(path, _session_id(ev))
     if state is None:
+        dbg["state"] = "unavailable"
+        _dbg("transcript_scan", dbg)
         return out
     offset = 0
     try:
         offset = int(json.loads(state.read_text(encoding="utf-8")).get("offset", 0))
     except Exception:
         offset = 0
+    dbg["offset_before"] = offset
     try:
         fsize = os.path.getsize(path)
+        dbg["exists"] = True
+        dbg["size"] = fsize
         if fsize < offset:
             offset = 0  # transcript rotated / truncated
+            dbg["rotated"] = True
         if fsize <= offset:
+            dbg["note"] = "no new bytes past cursor"
+            dbg["offset_after"] = offset
+            _dbg("transcript_scan", dbg)
             return out
         consumed = 0
+        huge = bad = lines = 0
         with open(path, "rb") as fh:
             fh.seek(offset)
             for raw in fh:
                 if consumed + len(raw) > _SCAN_CAP_BYTES:
+                    dbg["note"] = "hit per-scan byte cap"
                     break  # resume from current point on the next scan
                 if not raw.endswith(b"\n"):
+                    dbg["note"] = "stopped at unterminated tail (transcript mid-write)"
                     break  # unterminated tail (transcript mid-write)
                 consumed += len(raw)
+                lines += 1
                 low = raw.lower()
-                if (b"usage" not in low and b"tokencount" not in low
-                        and b"token_count" not in low):
+                if (b"usage" not in low and b"tokens" not in low
+                        and b"tokencount" not in low and b"token_count" not in low):
                     continue  # cheap prefilter: line cannot carry usage
                 if len(raw) > 1_000_000:
+                    huge += 1
+                    dbg.setdefault("huge_lines", []).append(len(raw))  # type: ignore[union-attr]
                     continue
                 try:
-                    rec = _find_usage(json.loads(raw))
+                    rec, snippet = _find_usage(json.loads(raw))
                 except Exception:
+                    bad += 1
                     continue  # skip malformed / non-JSON lines
                 if rec:
                     out["input"] += rec["input"]
@@ -389,14 +444,23 @@ def _scan_usage_delta(ev: dict) -> dict:
                     out["cache_read"] += rec["cache_read"]
                     out["cache_write"] += rec["cache_write"]
                     out["found"] += 1
-        new_offset = offset + consumed
-        if new_offset != offset:
+                    if out["snippet"] is None:
+                        out["snippet"] = snippet
+        dbg["scanned_lines"] = lines
+        dbg["scanned_bytes"] = consumed
+        dbg["malformed"] = bad
+        dbg["huge_skipped"] = huge
+        dbg["usage_records"] = out["found"]
+        dbg["offset_after"] = offset + consumed
+        if consumed and dbg.get("note") != "hit per-scan byte cap":
             try:
-                state.write_text(json.dumps({"offset": new_offset}), encoding="utf-8")
+                state.write_text(json.dumps({"offset": offset + consumed}), encoding="utf-8")
             except OSError:
-                pass
+                dbg["note"] = "cursor write failed"
     except OSError:
-        return out
+        dbg["exists"] = False
+        dbg["note"] = "transcript path unreadable"
+    _dbg("transcript_scan", dbg)
     return out
 
 
@@ -422,6 +486,13 @@ def on_pre_invocation(ev: dict) -> None:
         # Usage records from model call N-1 land between invocations; fold
         # them into this invocation's single llm_call event.
         data.update(_usage_event_data(usage))
+    _dbg("pre_invocation", {
+        "payload_keys": sorted(str(k) for k in ev.keys())[:24],
+        "usage_found": usage["found"],
+        "tokens": {k: usage[k] for k in ("input", "output", "cache_read", "cache_write")},
+        "usage_shape": usage["snippet"],
+        "llm_call_data": data,
+    })
     _post("/v1/events", {"events": [{
         "agent": "antigravity", "session_id": sid, "type": "llm_call",
         "data": data,
@@ -450,6 +521,9 @@ def on_stop(ev: dict) -> None:
             "agent": "antigravity", "session_id": sid, "type": "llm_call",
             "data": _usage_event_data(usage),
         }]})
+    _dbg("stop", {"payload_keys": sorted(str(k) for k in ev.keys())[:24],
+                  "usage_found": usage["found"],
+                  "tokens": {k: usage[k] for k in ("input", "output", "cache_read", "cache_write")}})
     _post("/v1/events", {"events": [{
         "agent": "antigravity", "session_id": sid,
         "type": "session_end", "data": {

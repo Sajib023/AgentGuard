@@ -318,7 +318,7 @@ export default definePluginEntry({
     // OpenAI-style prompt_tokens_details.cached_tokens) — probe child dicts.
     const CACHE_READ_KEYS = [
       "cache_read", "cache_read_tokens", "cacheReadTokens", "cached_tokens",
-      "cachedContentTokenCount", "cache_read_input_tokens",
+      "cachedTokens", "cachedContentTokenCount", "cache_read_input_tokens",
     ];
     const CACHE_WRITE_KEYS = [
       "cache_write", "cache_write_tokens", "cacheWriteTokens",
@@ -343,10 +343,12 @@ export default definePluginEntry({
       const input =
         num(node.input) ?? num(node.input_tokens) ?? num(node.inputTokens) ??
         num(node.prompt_tokens) ?? num(node.promptTokens) ?? num(node.promptTokenCount) ??
-        num(node.messages_input_tokens) ?? num(node.text_input_tokens);
+        num(node.prompt_token_count) ?? num(node.messages_input_tokens) ??
+        num(node.text_input_tokens);
       const output =
         num(node.output) ?? num(node.output_tokens) ?? num(node.outputTokens) ??
-        num(node.completion_tokens) ?? num(node.completionTokens) ?? num(node.candidatesTokenCount);
+        num(node.completion_tokens) ?? num(node.completionTokens) ?? num(node.candidatesTokenCount) ??
+        num(node.candidates_token_count);
       if ((input ?? 0) + (output ?? 0) > 0) {
         return {
           input_tokens: Math.round(input ?? 0),
