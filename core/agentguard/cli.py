@@ -446,6 +446,20 @@ def _strip_antigravity_sets(doc: dict, marker: str) -> dict:
     return cleaned
 
 
+def _antigravity_hook_command(dest_hook: Path) -> str:
+    """Hook command string for Antigravity — differs from oscompat.hook_command
+    on Windows. Antigravity's Windows hook runner has been observed mangling
+    embedded quotes in hook commands ('"...path..." is not recognized'), so
+    prefer the quote-free form when no path component contains a space (cmd.exe
+    parses drive-letter paths fine, including with forward slashes)."""
+    py = Path(sys.executable)
+    script = Path(dest_hook)
+    py_s, script_s = py.as_posix(), script.as_posix()
+    if oscompat.IS_WINDOWS and " " not in py_s and " " not in script_s:
+        return f"{py_s} {script_s}"
+    return oscompat.hook_command(dest_hook)
+
+
 def _setup_antigravity(repo: Path) -> bool:
     src = repo / "integrations" / "antigravity" / "hooks" / "agentguard_antigravity_hook.py"
     cfg_dir = _antigravity_config_dir()
@@ -485,7 +499,12 @@ def _setup_antigravity(repo: Path) -> bool:
             print(f"  [antigravity] backed up unreadable hooks.json -> {backup}")
 
     doc = _strip_antigravity_sets(doc, "agentguard_antigravity_hook.py")
-    base = oscompat.hook_command(dest_hook)
+    base = _antigravity_hook_command(dest_hook)
+    if not Path(sys.executable).exists():  # defensive: never wire a dead interpreter
+        print(
+            f"  [antigravity] warning: hook interpreter {sys.executable} does not"
+            " exist — re-run setup from the AgentGuard venv"
+        )
     doc["agentguard"] = {
         "SessionStart": [{"type": "command", "command": f"{base} SessionStart", "timeout": 15}],
         "Stop": [{"type": "command", "command": f"{base} Stop", "timeout": 15}],
